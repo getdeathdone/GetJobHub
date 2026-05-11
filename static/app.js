@@ -148,7 +148,7 @@ function jobCard(job) {
       <div class="card-footer">
         <a href="${job.source_url}" target="_blank" rel="noreferrer">Open vacancy</a>
         <button class="save-button ${saved}" data-job-id="${job.internal_id}">
-          <span data-lucide="${job.is_saved ? "star" : "star-plus"}"></span>
+          <span data-lucide="${job.is_saved ? "star" : "star"}"></span>
           ${job.is_saved ? "Saved" : "Save"}
         </button>
       </div>
