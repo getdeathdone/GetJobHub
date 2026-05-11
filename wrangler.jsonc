@@ -18,12 +18,11 @@
     "nodejs_compat"
   ],
 
-  // After creating the D1 database, uncomment this block and paste its id.
-  // "d1_databases": [
-  //   {
-  //     "binding": "DB",
-  //     "database_name": "getjobhub-db",
-  //     "database_id": "PASTE_D1_DATABASE_ID_HERE"
-  //   }
-  // ]
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "getjobhub-db",
+      "database_id": "2bf6688d-86bf-480b-acb5-fee022583ea0"
+    }
+  ]
 }
