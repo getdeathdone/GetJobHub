@@ -120,7 +120,7 @@ button svg,
 .source-panel {
   margin-top: auto;
   display: grid;
-  gap: 12px;
+  gap: 6px;
 }
 
 .saved-tabs {
@@ -166,7 +166,7 @@ button svg,
 .source-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
 }
 
 .source-row.muted {
@@ -176,12 +176,22 @@ button svg,
 .source-logo {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
   color: #fff;
-  font-size: 0.78rem;
+  font-size: 0.55rem;
   font-weight: 800;
+}
+
+.source-row strong {
+  font-size: 0.76rem;
+  line-height: 1.1;
+}
+
+.source-row small {
+  font-size: 0.62rem;
+  line-height: 1.15;
 }
 
 .workua {
@@ -534,6 +544,158 @@ h2 {
 
 .chart-panel.wide {
   grid-column: 1 / -1;
+}
+
+.explain-panel {
+  margin-top: 22px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.explain-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.explain-grid article {
+  min-height: 160px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.explain-grid span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--teal-soft);
+  color: var(--teal);
+  font-weight: 900;
+}
+
+.explain-grid h3 {
+  margin: 12px 0 8px;
+  font-size: 0.98rem;
+}
+
+.explain-grid p {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.market-map-hero {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 22px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.market-map-hero h2 {
+  margin: 4px 0 8px;
+  font-size: clamp(1.8rem, 4vw, 3.4rem);
+}
+
+.market-map-hero p:not(.eyebrow) {
+  max-width: 720px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.market-map-hero strong {
+  font-size: clamp(3rem, 8vw, 6rem);
+  line-height: 0.9;
+  color: var(--teal);
+}
+
+.market-map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.market-map-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 12px;
+  min-height: 520px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(212, 93, 67, 0.08)),
+    var(--surface);
+}
+
+.market-node {
+  display: grid;
+  align-content: space-between;
+  min-height: calc(128px * var(--node-scale));
+  padding: 16px;
+  border: 1px solid rgba(15, 118, 110, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 14px 34px rgba(47, 53, 50, 0.08);
+}
+
+.market-node span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.market-node strong {
+  margin: 10px 0;
+  font-size: 2.4rem;
+  line-height: 0.95;
+}
+
+.market-node small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.market-map-side {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.market-source-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.market-source-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) 38px;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.market-source-row i {
+  height: 10px;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--teal), var(--coral));
 }
 
 .bar-chart {
@@ -978,6 +1140,15 @@ h2 {
   .analytics-grid {
     grid-template-columns: 1fr;
   }
+
+  .market-map-layout,
+  .market-map-board {
+    grid-template-columns: 1fr;
+  }
+
+  .explain-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
@@ -987,6 +1158,7 @@ h2 {
   }
 
   .topbar,
+  .market-map-hero,
   .controls,
   .vacancy-card-header,
   .card-footer {
@@ -1015,7 +1187,8 @@ h2 {
   }
 
   .provider-grid,
-  .source-filter-grid {
+  .source-filter-grid,
+  .explain-grid {
     grid-template-columns: 1fr;
   }
 }

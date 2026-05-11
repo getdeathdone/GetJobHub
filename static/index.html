@@ -17,6 +17,7 @@
 
         <nav class="nav" id="main-nav" aria-label="Main navigation">
           <button class="nav-item active" data-view="overview"><span data-lucide="layout-dashboard"></span>Overview</button>
+          <button class="nav-item" data-view="market"><span data-lucide="network"></span>Market map</button>
           <button class="nav-item" data-view="search"><span data-lucide="search"></span>Search vacancies</button>
           <button class="nav-item" data-view="favorites"><span data-lucide="star"></span>Favorites</button>
         </nav>
@@ -49,6 +50,10 @@
             <button class="icon-button" id="refresh-button" title="Refresh data" aria-label="Refresh data">
               <span data-lucide="refresh-cw"></span>
             </button>
+            <button class="secondary-button" id="expand-index-button" title="Expand vacancy index">
+              <span data-lucide="database-zap"></span>
+              Expand index
+            </button>
             <a class="docs-link" href="/docs">API Console</a>
           </div>
         </header>
@@ -60,7 +65,7 @@
               <div class="visual-overlay"><span>Live market scan</span><strong>Vacancy intelligence</strong></div>
             </div>
             <div class="metric-board">
-              <article class="metric"><span>Total indexed</span><strong id="metric-total">--</strong><small>normalized vacancies</small></article>
+              <article class="metric"><span>Indexed vacancies</span><strong id="metric-total">--</strong><small>stored from recent searches</small></article>
               <article class="metric"><span>Saved</span><strong id="metric-saved">--</strong><small>personal shortlist</small></article>
               <article class="metric"><span>New today</span><strong id="metric-today">--</strong><small>fresh scrape volume</small></article>
             </div>
@@ -68,7 +73,7 @@
 
           <section class="analytics-grid">
             <article class="chart-panel">
-              <div class="section-heading"><div><p class="eyebrow">Sources</p><h2>Vacancies by provider</h2></div></div>
+              <div class="section-heading"><div><p class="eyebrow">Sources</p><h2>Indexed vacancies by provider</h2></div></div>
               <div id="source-chart" class="bar-chart"></div>
             </article>
             <article class="chart-panel">
@@ -79,6 +84,34 @@
               <div class="section-heading"><div><p class="eyebrow">Pinned categories</p><h2>New matches in saved searches</h2></div></div>
               <div id="category-chart" class="bar-chart"></div>
             </article>
+          </section>
+
+          <section class="explain-panel" aria-label="How search works">
+            <div class="section-heading">
+              <div><p class="eyebrow">How it works</p><h2>Search first, index as you go</h2></div>
+            </div>
+            <div class="explain-grid">
+              <article>
+                <span>1</span>
+                <h3>Choose sources</h3>
+                <p>Select the job boards you want to check. The app only asks those sources, so a Djinni-only search stays Djinni-only.</p>
+              </article>
+              <article>
+                <span>2</span>
+                <h3>Fetch fresh pages</h3>
+                <p>Cloudflare Worker calls public APIs where available and lightweight HTML/RSS adapters for sites like Work.ua, DOU and Djinni.</p>
+              </article>
+              <article>
+                <span>3</span>
+                <h3>Clean and match</h3>
+                <p>Each vacancy is converted into one shape: title, company, location, salary, source link and a short description. Then it is scored against your query.</p>
+              </article>
+              <article>
+                <span>4</span>
+                <h3>Save the index</h3>
+                <p>Matched vacancies are stored in D1 and deduplicated by source URL. The overview shows this stored index, not every job that exists on the internet.</p>
+              </article>
+            </div>
           </section>
         </section>
 
@@ -125,6 +158,25 @@
         <section class="view" id="view-favorites">
           <div class="section-heading"><div><p class="eyebrow">Shortlist</p><h2>Saved vacancies</h2></div></div>
           <div class="vacancy-list" id="favorites-list"></div>
+        </section>
+
+        <section class="view" id="view-market">
+          <section class="market-map-hero">
+            <div>
+              <p class="eyebrow">Market map</p>
+              <h2>Where the indexed roles cluster</h2>
+              <p>The map groups stored vacancies into broad job families, then shows which providers are feeding each part of the market.</p>
+            </div>
+            <strong id="market-map-total">--</strong>
+          </section>
+
+          <section class="market-map-layout">
+            <div class="market-map-board" id="market-map-board"></div>
+            <aside class="market-map-side">
+              <div class="section-heading"><div><p class="eyebrow">Sources</p><h2>Provider mix</h2></div></div>
+              <div id="market-source-list" class="market-source-list"></div>
+            </aside>
+          </section>
         </section>
 
         <section class="view" id="view-category">

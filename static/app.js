@@ -39,8 +39,12 @@ const el = {
   sourceChart: document.querySelector("#source-chart"),
   salaryChart: document.querySelector("#salary-chart"),
   categoryChart: document.querySelector("#category-chart"),
+  marketMapBoard: document.querySelector("#market-map-board"),
+  marketMapTotal: document.querySelector("#market-map-total"),
+  marketSourceList: document.querySelector("#market-source-list"),
   searchButton: document.querySelector("#search-button"),
   saveCategoryButton: document.querySelector("#save-category-button"),
+  expandIndexButton: document.querySelector("#expand-index-button"),
   progress: document.querySelector("#search-progress"),
   progressTitle: document.querySelector("#progress-title"),
   progressPercent: document.querySelector("#progress-percent"),
@@ -50,6 +54,32 @@ const el = {
   selectAllSourcesButton: document.querySelector("#select-all-sources-button"),
   clearSourcesButton: document.querySelector("#clear-sources-button"),
 };
+
+const INDEX_SEED_QUERIES = [
+  "python",
+  "backend",
+  "frontend",
+  "react",
+  "node",
+  "full stack",
+  "qa",
+  "devops",
+  "data",
+  "ai",
+  "unity",
+  "product manager",
+];
+
+const MARKET_SEGMENTS = [
+  { id: "backend", label: "Backend", terms: ["backend", "python", "node", "java", "api", "server", "golang", "django"] },
+  { id: "frontend", label: "Frontend", terms: ["frontend", "react", "vue", "angular", "javascript", "typescript", "next"] },
+  { id: "fullstack", label: "Full stack", terms: ["full stack", "fullstack", "full-stack"] },
+  { id: "ai", label: "AI / Data", terms: ["ai", "ml", "machine learning", "data", "llm", "openai", "analytics"] },
+  { id: "devops", label: "DevOps", terms: ["devops", "cloud", "sre", "aws", "azure", "kubernetes", "platform"] },
+  { id: "qa", label: "QA", terms: ["qa", "quality", "test", "automation tester"] },
+  { id: "game", label: "Game / Unity", terms: ["unity", "unreal", "game", "gamedev"] },
+  { id: "product", label: "Product", terms: ["product manager", "project manager", "scrum", "owner"] },
+];
 
 function api(path, options = {}) {
   const method = options.method || "GET";
@@ -148,6 +178,11 @@ function sourceLabel(source) {
     himalayas: "Himalayas",
     remotejobs: "RemoteJobs",
   }[source] || source;
+}
+
+function classifyJob(job) {
+  const haystack = `${job.title || ""} ${job.company_name || ""} ${job.description || ""}`.toLowerCase();
+  return MARKET_SEGMENTS.find((segment) => segment.terms.some((term) => haystack.includes(term)))?.id || "other";
 }
 
 function formatDate(value) {
@@ -291,7 +326,7 @@ async function runSearch() {
 
   try {
     const params = searchParams();
-    params.set("page_limit", "1");
+    params.set("page_limit", "3");
     await api(`/api/v1/scrape/all?${params.toString()}`, { method: "POST" });
     const jobs = await api(`/api/v1/vacancies/search?${searchParams().toString()}`);
     state.lastSearchJobs = jobs;
@@ -433,7 +468,83 @@ async function refreshOverview() {
   renderBars(el.categoryChart, stats.categories, "new_today");
 }
 
+async function renderMarketMap() {
+  const stats = await api("/api/v1/stats");
+  const jobs = await api("/api/v1/vacancies/search?limit=200");
+  const counts = Object.fromEntries(MARKET_SEGMENTS.map((segment) => [segment.id, 0]));
+  counts.other = 0;
+
+  jobs.forEach((job) => {
+    counts[classifyJob(job)] = (counts[classifyJob(job)] || 0) + 1;
+  });
+
+  const max = Math.max(1, ...Object.values(counts));
+  const cards = [
+    ...MARKET_SEGMENTS,
+    { id: "other", label: "Other", terms: ["mixed roles"] },
+  ];
+
+  el.marketMapTotal.textContent = stats.total;
+  el.marketMapBoard.innerHTML = cards
+    .map((segment) => {
+      const count = counts[segment.id] || 0;
+      const size = 0.72 + (count / max) * 1.28;
+      return `
+        <article class="market-node" style="--node-scale:${size}">
+          <span>${segment.label}</span>
+          <strong>${count}</strong>
+          <small>${segment.terms.slice(0, 4).join(" · ")}</small>
+        </article>
+      `;
+    })
+    .join("");
+
+  const total = Math.max(1, stats.total);
+  el.marketSourceList.innerHTML = stats.by_source
+    .map(
+      (row) => `
+        <div class="market-source-row">
+          <span>${sourceLabel(row.source)}</span>
+          <i style="width:${(row.total / total) * 100}%"></i>
+          <strong>${row.total}</strong>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+async function expandIndex() {
+  el.expandIndexButton.disabled = true;
+  el.feedStatus.textContent = "expanding index";
+
+  try {
+    const sources = selectedSources();
+    let parsed = 0;
+    let created = 0;
+
+    for (const query of INDEX_SEED_QUERIES) {
+      const params = new URLSearchParams();
+      params.set("q", query);
+      params.set("page_limit", "2");
+      sources.forEach((source) => params.append("source", source));
+      const result = await api(`/api/v1/scrape/all?${params.toString()}`, { method: "POST" });
+      parsed += result.parsed || 0;
+      created += result.created || 0;
+      el.feedStatus.textContent = `${created} new from ${parsed} parsed`;
+    }
+
+    await refreshOverview();
+    showToast(`Index expanded: ${created} new vacancies`);
+  } catch (error) {
+    showToast(error.message);
+    el.feedStatus.textContent = "index failed";
+  } finally {
+    el.expandIndexButton.disabled = false;
+  }
+}
+
 el.searchButton.addEventListener("click", runSearch);
+el.expandIndexButton.addEventListener("click", expandIndex);
 el.selectAllSourcesButton.addEventListener("click", () => {
   document.querySelectorAll("[data-source-input]").forEach((input) => {
     input.checked = true;
@@ -464,6 +575,7 @@ document.body.addEventListener("click", (event) => {
     switchView(nav.dataset.view);
     if (nav.dataset.view === "favorites") loadFavorites();
     if (nav.dataset.view === "overview") refreshOverview();
+    if (nav.dataset.view === "market") renderMarketMap();
     return;
   }
   const categoryTab = event.target.closest("[data-category-id]");
@@ -488,6 +600,7 @@ async function boot() {
   }
   await loadCategories();
   await refreshOverview();
+  await renderMarketMap();
   switchView("overview");
 }
 
