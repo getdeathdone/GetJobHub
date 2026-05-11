@@ -563,11 +563,6 @@ el.sourceFilterGrid.addEventListener("change", (event) => {
 document.querySelector("#save-category-button").addEventListener("click", saveCategory);
 document.querySelector("#sync-category-button").addEventListener("click", syncActiveCategory);
 document.querySelector("#delete-category-button").addEventListener("click", deleteActiveCategory);
-document.querySelector("#refresh-button").addEventListener("click", async () => {
-  await refreshOverview();
-  if (state.view === "favorites") await loadFavorites();
-  if (state.view === "category") await loadCategoryJobs(state.activeCategoryId);
-});
 
 document.body.addEventListener("click", (event) => {
   const nav = event.target.closest("[data-view]");

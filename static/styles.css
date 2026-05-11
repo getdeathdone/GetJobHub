@@ -99,6 +99,35 @@ input {
   gap: 6px;
 }
 
+.developer-card {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid rgba(30, 37, 40, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 253, 248, 0.55);
+}
+
+.developer-card strong {
+  font-size: 0.9rem;
+}
+
+.developer-card div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.developer-card a {
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--teal);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-decoration: none;
+}
+
 .nav-item {
   min-height: 42px;
   padding: 0 12px;
