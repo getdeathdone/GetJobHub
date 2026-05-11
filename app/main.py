@@ -29,13 +29,21 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
         start_time = time.time()
-        response = await call_next(request)
-        process_time = (time.time() - start_time) * 1000
-        formatted_process_time = "{0:.2f}ms".format(process_time)
-        logger.info(
-            f"RID: {request.scope.get('root_path')} - {request.method} {request.url.path} - Status: {response.status_code} - Completed in {formatted_process_time}"
-        )
-        return response
+        try:
+            response = await call_next(request)
+            process_time = (time.time() - start_time) * 1000
+            formatted_process_time = "{0:.2f}ms".format(process_time)
+            logger.info(
+                f"RID: {request.scope.get('root_path')} - {request.method} {request.url.path} - Status: {response.status_code} - Completed in {formatted_process_time}"
+            )
+            return response
+        except Exception as e:
+            logger.error(f"Unhandled exception during request {request.method} {request.url.path}: {e}", exc_info=True)
+            raise
+
+    @app.get("/api/v1/ping")
+    def ping():
+        return {"status": "ok", "message": "GetJobHub API is alive"}
 
     app.include_router(api_router, prefix="/api/v1")
 
