@@ -400,6 +400,61 @@ function normalizeRemoteOk(job) {
   };
 }
 
+function normalizeHimalayas(job) {
+  const salaryMin = Number(job.minSalary || 0) || null;
+  const salaryMax = Number(job.maxSalary || 0) || null;
+  const currency = job.currency || "USD";
+  const locations = Array.isArray(job.locationRestrictions)
+    ? job.locationRestrictions.map((location) => location?.name).filter(Boolean)
+    : [];
+
+  return {
+    source: "himalayas",
+    source_url: job.applicationLink || job.url || `https://himalayas.app/jobs/${job.guid}`,
+    external_id: String(job.guid || job.id || job.applicationLink),
+    title: job.title || "Untitled role",
+    company_name: job.companyName || job.company?.name || null,
+    city: locations.length ? locations.join(", ") : "Worldwide",
+    remote: true,
+    salary_raw: salaryMin || salaryMax ? `${currency} ${salaryMin || 0} - ${salaryMax || salaryMin}` : null,
+    salary_min: salaryMin,
+    salary_max: salaryMax,
+    description: summarizeText(job.description || job.excerpt),
+    posted_at: parseDate(job.pubDate),
+    tags: job.tags || [],
+  };
+}
+
+function normalizeRemoteJobs(job) {
+  const company = job.company || {};
+  const salaryMin = Number(job.salary_min || 0) || null;
+  const salaryMax = Number(job.salary_max || 0) || null;
+
+  return {
+    source: "remotejobs",
+    source_url: job.apply_url || job.url,
+    external_id: String(job.id || job.slug || job.url),
+    title: job.title || "Untitled role",
+    company_name: company.name || job.company_name || null,
+    city: job.location || "Remote",
+    remote: true,
+    salary_raw: job.salary_text || null,
+    salary_min: salaryMin,
+    salary_max: salaryMax,
+    description: summarizeText(job.description),
+    posted_at: parseDate(job.posted_at),
+    tags: job.tags || [],
+  };
+}
+
+function parseDate(value) {
+  if (!value) return null;
+  if (typeof value === "number") return new Date(value > 100000000000 ? value : value * 1000).toISOString();
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, {
     headers: { "user-agent": "GetJobHub Cloudflare Worker" },
@@ -416,15 +471,24 @@ async function scrapeSources(db, url) {
   const remotiveUrl = `https://remotive.com/api/remote-jobs?search=${encodeURIComponent(query)}`;
   const arbeitnowUrl = `https://www.arbeitnow.com/api/job-board-api?page=${pageLimit}`;
   const remoteOkUrl = "https://remoteok.com/api";
+  const himalayasUrl = `https://himalayas.app/jobs/api/search?q=${encodeURIComponent(query)}&page=1`;
+  const remoteJobsUrl = `https://remotejobs.org/api/v1/jobs?q=${encodeURIComponent(query)}&limit=50&offset=0`;
 
-  const [remotive, arbeitnow, remoteok] = await Promise.allSettled([
+  const [remotive, arbeitnow, remoteok, himalayas, remotejobs] = await Promise.allSettled([
     fetchJson(remotiveUrl),
     fetchJson(arbeitnowUrl),
     fetchJson(remoteOkUrl),
+    fetchJson(himalayasUrl),
+    fetchJson(remoteJobsUrl),
   ]);
 
   if (remotive.status === "fulfilled") {
-    jobs.push(...(remotive.value.jobs || []).map(normalizeRemotive).filter((job) => matchesQuery(job, query)).slice(0, 80));
+    jobs.push(
+      ...(remotive.value.jobs || [])
+        .map(normalizeRemotive)
+        .filter((job) => matchesQuery(job, query))
+        .slice(0, 80),
+    );
   }
 
   if (arbeitnow.status === "fulfilled") {
@@ -444,6 +508,26 @@ async function scrapeSources(db, url) {
     );
   }
 
+  if (himalayas.status === "fulfilled") {
+    jobs.push(
+      ...(himalayas.value.jobs || [])
+        .map(normalizeHimalayas)
+        .filter((job) => job.source_url && matchesQuery(job, query))
+        .sort((a, b) => relevanceScore(b, query) - relevanceScore(a, query))
+        .slice(0, 80),
+    );
+  }
+
+  if (remotejobs.status === "fulfilled") {
+    jobs.push(
+      ...(remotejobs.value.data || [])
+        .map(normalizeRemoteJobs)
+        .filter((job) => job.source_url && matchesQuery(job, query))
+        .sort((a, b) => relevanceScore(b, query) - relevanceScore(a, query))
+        .slice(0, 80),
+    );
+  }
+
   let created = 0;
   let updated = 0;
   for (const job of jobs) {
@@ -453,7 +537,7 @@ async function scrapeSources(db, url) {
   }
 
   return json({
-    source: "remotive,arbeitnow,remoteok",
+    source: "remotive,arbeitnow,remoteok,himalayas,remotejobs",
     parsed: jobs.length,
     created,
     updated,

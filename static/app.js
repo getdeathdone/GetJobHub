@@ -8,9 +8,6 @@ const state = {
 };
 
 const PROVIDERS = [
-  "Work.ua",
-  "DOU",
-  "Djinni",
   "Remotive",
   "Arbeitnow",
   "RemoteOK",
@@ -192,11 +189,11 @@ function startSearchProgress(query) {
 
   const steps = [
     { percent: 8, title: `Preparing free-text search for "${query}"`, active: 0 },
-    { percent: 20, title: "Querying Ukrainian providers", active: 2 },
-    { percent: 38, title: "Querying global remote APIs", active: 5 },
-    { percent: 56, title: "Expanding aliases and typo-tolerant matches", active: 7 },
-    { percent: 72, title: "Normalizing salaries, companies and source URLs", active: 8 },
-    { percent: 86, title: "Deduplicating and saving results", active: 8 },
+    { percent: 24, title: "Querying global remote APIs", active: 1 },
+    { percent: 44, title: "Checking keyword job boards", active: 3 },
+    { percent: 64, title: "Scoring relevance across titles and tags", active: 4 },
+    { percent: 78, title: "Normalizing salaries, companies and source URLs", active: 5 },
+    { percent: 88, title: "Deduplicating and saving results", active: 5 },
   ];
   let index = 0;
   applyProgressStep(steps[index]);
@@ -246,7 +243,7 @@ function searchParams() {
 
 async function runSearch() {
   const query = el.query.value.trim() || "full stack";
-  el.feedStatus.textContent = "searching 8 sources";
+  el.feedStatus.textContent = "searching 5 cloud sources";
   setSearchBusy(true);
   startSearchProgress(query);
   renderLoadingCards(el.searchList);
@@ -281,7 +278,7 @@ async function saveCategory() {
     city: el.city.value.trim() || null,
     remote: el.remote.checked ? true : null,
     salary_min: el.salary.value ? Number(el.salary.value) : null,
-    sources: ["workua", "dou", "djinni", "remotive", "arbeitnow", "remoteok", "himalayas", "remotejobs"],
+    sources: ["remotive", "arbeitnow", "remoteok", "himalayas", "remotejobs"],
   };
   const category = await api("/api/v1/categories", { method: "POST", body: JSON.stringify(payload) });
   await loadCategories();
