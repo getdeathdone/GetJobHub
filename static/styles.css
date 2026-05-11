@@ -620,6 +620,31 @@ h2 {
   line-height: 1.5;
 }
 
+.disclaimer-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid rgba(183, 121, 31, 0.35);
+  border-radius: 8px;
+  background: #fff8ea;
+  color: #6f4b12;
+}
+
+.disclaimer-panel svg {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+}
+
+.disclaimer-panel p {
+  color: inherit;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
 .market-map-hero {
   display: flex;
   align-items: end;

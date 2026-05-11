@@ -514,6 +514,7 @@ async function renderMarketMap() {
 }
 
 async function expandIndex() {
+  if (!el.expandIndexButton) return;
   el.expandIndexButton.disabled = true;
   el.feedStatus.textContent = "expanding index";
 
@@ -544,7 +545,7 @@ async function expandIndex() {
 }
 
 el.searchButton.addEventListener("click", runSearch);
-el.expandIndexButton.addEventListener("click", expandIndex);
+el.expandIndexButton?.addEventListener("click", expandIndex);
 el.selectAllSourcesButton.addEventListener("click", () => {
   document.querySelectorAll("[data-source-input]").forEach((input) => {
     input.checked = true;
