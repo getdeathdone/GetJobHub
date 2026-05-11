@@ -98,7 +98,14 @@ function dbUnavailable() {
 
 async function ensureSchema(db) {
   if (schemaReady) return;
-  await db.exec(SCHEMA_SQL);
+  const statements = SCHEMA_SQL.split(";")
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+
+  for (const statement of statements) {
+    await db.prepare(statement).run();
+  }
+
   schemaReady = true;
 }
 
