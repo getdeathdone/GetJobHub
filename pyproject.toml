@@ -17,6 +17,9 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
 ]
 
+[tool.setuptools.packages.find]
+include = ["app", "app.*"]
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3.0",
