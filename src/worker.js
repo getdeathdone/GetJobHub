@@ -119,6 +119,12 @@ function now() {
 
 function cleanText(value) {
   return String(value || "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
     .replace(/<[^>]*>/g, " ")
     .replace(/Find more English Speaking Jobs in Germany on Arbeitnow/gi, "")
     .replace(/\s+/g, " ")
@@ -463,6 +469,176 @@ async function fetchJson(url) {
   return response.json();
 }
 
+async function fetchText(url) {
+  const response = await fetch(url, {
+    headers: {
+      accept: "text/html,application/rss+xml,application/xml;q=0.9,*/*;q=0.8",
+      "accept-language": "en-US,en;q=0.9,uk;q=0.8",
+      "user-agent": "Mozilla/5.0 GetJobHub Cloudflare Worker",
+    },
+  });
+  if (!response.ok) throw new Error(`${url} returned ${response.status}`);
+  return response.text();
+}
+
+function absoluteUrl(baseUrl, href) {
+  try {
+    return new URL(href, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractSalary(text) {
+  return cleanText(text).match(/(\$?\d[\d\s]*(?:-|–|—)?\s*\$?\d*[\d\s]*\s*(?:грн|₴|USD|EUR|\$|€)?)/i)?.[1] || null;
+}
+
+function parseSalaryRange(salaryRaw) {
+  const numbers = cleanText(salaryRaw)
+    .replace(/[^\d\s.-]/g, " ")
+    .split(/\s+/)
+    .map(Number)
+    .filter(Boolean);
+
+  if (!numbers.length) return [null, null];
+  return [Math.min(...numbers), Math.max(...numbers)];
+}
+
+function extractCity(text) {
+  const lowered = cleanText(text).toLowerCase();
+  return [
+    "Kyiv",
+    "Київ",
+    "Lviv",
+    "Львів",
+    "Dnipro",
+    "Дніпро",
+    "Одеса",
+    "Харків",
+    "Remote",
+    "Europe",
+    "Worldwide",
+  ].find((city) => lowered.includes(city.toLowerCase())) || null;
+}
+
+function isRemote(text) {
+  const lowered = cleanText(text).toLowerCase();
+  return ["remote", "remotely", "віддалено", "дистанційно"].some((token) => lowered.includes(token));
+}
+
+function normalizeWorkUaFromAnchor(match) {
+  const href = match[1];
+  const rawTitle = match[2];
+  const sourceUrl = absoluteUrl("https://www.work.ua", href);
+  const title = cleanText(rawTitle);
+  if (!sourceUrl || !title || !/\/jobs\/\d+/i.test(sourceUrl)) return null;
+
+  const salaryRaw = extractSalary(title);
+  const [salaryMin, salaryMax] = parseSalaryRange(salaryRaw);
+  return {
+    source: "workua",
+    source_url: sourceUrl,
+    external_id: sourceUrl.match(/\/jobs\/(\d+)/)?.[1] || sourceUrl,
+    title,
+    company_name: null,
+    city: extractCity(title),
+    remote: isRemote(title),
+    salary_raw: salaryRaw,
+    salary_min: salaryMin,
+    salary_max: salaryMax,
+    description: null,
+    posted_at: now(),
+  };
+}
+
+function normalizeDouRssItem(item) {
+  const title = cleanText(item.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>|<title>([\s\S]*?)<\/title>/i)?.[1] || item.match(/<title>([\s\S]*?)<\/title>/i)?.[1]);
+  const link = cleanText(item.match(/<link>([\s\S]*?)<\/link>/i)?.[1]);
+  const description = summarizeText(item.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>|<description>([\s\S]*?)<\/description>/i)?.[1] || "");
+  if (!title || !link) return null;
+
+  const cleanTitle = title.split(" в ")[0].split(" at ")[0];
+  const company = title.includes(" в ") ? title.split(" в ").pop() : null;
+  const text = `${title} ${description}`;
+  return {
+    source: "dou",
+    source_url: link,
+    external_id: link.replace(/\/$/, "").split("/").pop(),
+    title: cleanTitle,
+    company_name: company,
+    city: extractCity(text),
+    remote: isRemote(text),
+    salary_raw: null,
+    description,
+    posted_at: parseDate(item.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1]) || now(),
+  };
+}
+
+function normalizeDjinniFromAnchor(match) {
+  const href = match[1];
+  const rawTitle = match[2];
+  const sourceUrl = absoluteUrl("https://djinni.co", href);
+  const title = cleanText(rawTitle);
+  if (!sourceUrl || !title || title.toLowerCase() === "jobs" || !/\/jobs\/\d+/i.test(sourceUrl)) return null;
+
+  const salaryRaw = extractSalary(title);
+  const [salaryMin, salaryMax] = parseSalaryRange(salaryRaw);
+  return {
+    source: "djinni",
+    source_url: sourceUrl,
+    external_id: sourceUrl.replace(/\/$/, "").split("/").pop(),
+    title,
+    company_name: null,
+    city: extractCity(title),
+    remote: isRemote(title),
+    salary_raw: salaryRaw,
+    salary_min: salaryMin,
+    salary_max: salaryMax,
+    description: null,
+    posted_at: now(),
+  };
+}
+
+function uniqueByUrl(jobs) {
+  const seen = new Set();
+  return jobs.filter((job) => {
+    if (!job?.source_url || seen.has(job.source_url)) return false;
+    seen.add(job.source_url);
+    return true;
+  });
+}
+
+async function scrapeWorkUa(query, pageLimit) {
+  const jobs = [];
+  for (let page = 1; page <= pageLimit; page += 1) {
+    const slug = encodeURIComponent(query.trim().replace(/\s+/g, "+"));
+    const suffix = page > 1 ? `?page=${page}` : "";
+    const html = await fetchText(`https://www.work.ua/jobs-${slug}/${suffix}`);
+    const matches = [...html.matchAll(/<a[^>]+href=["']([^"']*\/jobs\/\d+[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+    jobs.push(...matches.map(normalizeWorkUaFromAnchor).filter(Boolean));
+  }
+  return uniqueByUrl(jobs).filter((job) => matchesQuery(job, query)).slice(0, 80);
+}
+
+async function scrapeDou(query) {
+  const rss = await fetchText(`https://jobs.dou.ua/vacancies/feeds/?search=${encodeURIComponent(query)}`);
+  const items = [...rss.matchAll(/<item>([\s\S]*?)<\/item>/gi)].map((match) => match[1]);
+  return uniqueByUrl(items.map(normalizeDouRssItem).filter(Boolean))
+    .filter((job) => matchesQuery(job, query))
+    .slice(0, 80);
+}
+
+async function scrapeDjinni(query, pageLimit) {
+  const jobs = [];
+  for (let page = 1; page <= pageLimit; page += 1) {
+    const slug = encodeURIComponent(query.toLowerCase().trim().replace(/\s+/g, "-"));
+    const html = await fetchText(`https://djinni.co/jobs/keyword-${slug}/?page=${page}`);
+    const matches = [...html.matchAll(/<a[^>]+href=["']([^"']*\/jobs\/\d+[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+    jobs.push(...matches.map(normalizeDjinniFromAnchor).filter(Boolean));
+  }
+  return uniqueByUrl(jobs).filter((job) => matchesQuery(job, query)).slice(0, 80);
+}
+
 async function scrapeSources(db, url) {
   const query = url.searchParams.get("q") || "full stack";
   const pageLimit = Math.min(Number(url.searchParams.get("page_limit") || 1), 5);
@@ -474,13 +650,21 @@ async function scrapeSources(db, url) {
   const himalayasUrl = `https://himalayas.app/jobs/api/search?q=${encodeURIComponent(query)}&page=1`;
   const remoteJobsUrl = `https://remotejobs.org/api/v1/jobs?q=${encodeURIComponent(query)}&limit=50&offset=0`;
 
-  const [remotive, arbeitnow, remoteok, himalayas, remotejobs] = await Promise.allSettled([
+  const [workua, dou, djinni, remotive, arbeitnow, remoteok, himalayas, remotejobs] =
+    await Promise.allSettled([
+      scrapeWorkUa(query, pageLimit),
+      scrapeDou(query),
+      scrapeDjinni(query, pageLimit),
     fetchJson(remotiveUrl),
     fetchJson(arbeitnowUrl),
     fetchJson(remoteOkUrl),
     fetchJson(himalayasUrl),
     fetchJson(remoteJobsUrl),
-  ]);
+    ]);
+
+  if (workua.status === "fulfilled") jobs.push(...workua.value);
+  if (dou.status === "fulfilled") jobs.push(...dou.value);
+  if (djinni.status === "fulfilled") jobs.push(...djinni.value);
 
   if (remotive.status === "fulfilled") {
     jobs.push(
@@ -537,7 +721,7 @@ async function scrapeSources(db, url) {
   }
 
   return json({
-    source: "remotive,arbeitnow,remoteok,himalayas,remotejobs",
+    source: "workua,dou,djinni,remotive,arbeitnow,remoteok,himalayas,remotejobs",
     parsed: jobs.length,
     created,
     updated,
