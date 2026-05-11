@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GetJobHub Command Center</title>
+    <link rel="preconnect" href="https://images.unsplash.com" />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="/" aria-label="GetJobHub home">
+          <span class="brand-mark">GJ</span>
+          <span><strong>GetJobHub</strong><small>UA talent market</small></span>
+        </a>
+
+        <nav class="nav" id="main-nav" aria-label="Main navigation">
+          <button class="nav-item active" data-view="overview"><span data-lucide="layout-dashboard"></span>Overview</button>
+          <button class="nav-item" data-view="search"><span data-lucide="search"></span>Search vacancies</button>
+          <button class="nav-item" data-view="favorites"><span data-lucide="star"></span>Favorites</button>
+        </nav>
+
+        <div class="saved-tabs">
+          <span class="panel-label">Pinned searches</span>
+          <div id="category-tabs" class="category-tabs"></div>
+        </div>
+
+        <div class="source-panel">
+          <span class="panel-label">Provider health</span>
+          <div class="source-row"><span class="source-logo workua">W</span><div><strong>Work.ua</strong><small>HTML adapter</small></div></div>
+          <div class="source-row"><span class="source-logo dou">D</span><div><strong>DOU</strong><small>RSS + HTML</small></div></div>
+          <div class="source-row"><span class="source-logo djinni">Dj</span><div><strong>Djinni</strong><small>HTML adapter</small></div></div>
+          <div class="source-row"><span class="source-logo workua">R</span><div><strong>Remotive</strong><small>global API</small></div></div>
+          <div class="source-row"><span class="source-logo dou">A</span><div><strong>Arbeitnow</strong><small>EU / remote API</small></div></div>
+          <div class="source-row"><span class="source-logo djinni">OK</span><div><strong>RemoteOK</strong><small>global remote API</small></div></div>
+          <div class="source-row"><span class="source-logo workua">H</span><div><strong>Himalayas</strong><small>free search API</small></div></div>
+          <div class="source-row"><span class="source-logo dou">RJ</span><div><strong>RemoteJobs</strong><small>free keyword API</small></div></div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Distributed Job Aggregator</p>
+            <h1 id="page-title">Overview</h1>
+          </div>
+          <div class="topbar-actions">
+            <button class="icon-button" id="refresh-button" title="Refresh data" aria-label="Refresh data">
+              <span data-lucide="refresh-cw"></span>
+            </button>
+            <a class="docs-link" href="/docs">API Console</a>
+          </div>
+        </header>
+
+        <section class="view active" id="view-overview">
+          <section class="hero-grid" aria-label="Market overview">
+            <div class="market-visual">
+              <img src="https://images.unsplash.com/photo-1551434678-e076c223a692?auto=format&fit=crop&w=1200&q=80" alt="Engineering team reviewing product data" />
+              <div class="visual-overlay"><span>Live market scan</span><strong>Vacancy intelligence</strong></div>
+            </div>
+            <div class="metric-board">
+              <article class="metric"><span>Total indexed</span><strong id="metric-total">--</strong><small>normalized vacancies</small></article>
+              <article class="metric"><span>Saved</span><strong id="metric-saved">--</strong><small>personal shortlist</small></article>
+              <article class="metric"><span>New today</span><strong id="metric-today">--</strong><small>fresh scrape volume</small></article>
+            </div>
+          </section>
+
+          <section class="analytics-grid">
+            <article class="chart-panel">
+              <div class="section-heading"><div><p class="eyebrow">Sources</p><h2>Vacancies by provider</h2></div></div>
+              <div id="source-chart" class="bar-chart"></div>
+            </article>
+            <article class="chart-panel">
+              <div class="section-heading"><div><p class="eyebrow">Compensation</p><h2>Salary ranges</h2></div></div>
+              <div id="salary-chart" class="bar-chart"></div>
+            </article>
+            <article class="chart-panel wide">
+              <div class="section-heading"><div><p class="eyebrow">Pinned categories</p><h2>New matches in saved searches</h2></div></div>
+              <div id="category-chart" class="bar-chart"></div>
+            </article>
+          </section>
+        </section>
+
+        <section class="view" id="view-search">
+          <section class="controls" aria-label="Search controls">
+            <label class="search-box"><span data-lucide="search"></span><input id="query-input" type="search" value="full stack" placeholder="anything: ai agent, unity, nurse, product manager" /></label>
+            <label>City<input id="city-input" type="text" placeholder="Kyiv, Lviv, Remote" /></label>
+            <label>Min salary<input id="salary-input" type="number" min="0" step="100" placeholder="1000" /></label>
+            <label class="toggle"><input id="remote-input" type="checkbox" /><span>Remote only</span></label>
+          </section>
+
+          <section class="action-strip">
+            <button class="primary-button" id="search-button"><span data-lucide="scan-search"></span>Search 8 sources</button>
+            <button class="secondary-button" id="save-category-button"><span data-lucide="pin"></span>Save as category</button>
+            <span class="status-pill" id="feed-status">ready</span>
+          </section>
+
+          <section class="search-progress hidden" id="search-progress" aria-live="polite">
+            <div class="progress-heading">
+              <div>
+                <p class="eyebrow">Worldwide search</p>
+                <h2 id="progress-title">Preparing search</h2>
+              </div>
+              <strong id="progress-percent">0%</strong>
+            </div>
+            <div class="progress-track"><span id="progress-bar"></span></div>
+            <div class="provider-grid" id="provider-grid"></div>
+          </section>
+
+          <div class="vacancy-list" id="search-list"></div>
+        </section>
+
+        <section class="view" id="view-favorites">
+          <div class="section-heading"><div><p class="eyebrow">Shortlist</p><h2>Saved vacancies</h2></div></div>
+          <div class="vacancy-list" id="favorites-list"></div>
+        </section>
+
+        <section class="view" id="view-category">
+          <div class="section-heading">
+            <div><p class="eyebrow">Pinned search</p><h2 id="category-title">Category</h2></div>
+            <div class="topbar-actions">
+              <button class="secondary-button" id="sync-category-button"><span data-lucide="refresh-cw"></span>Sync category</button>
+              <button class="danger-button" id="delete-category-button"><span data-lucide="trash-2"></span>Delete</button>
+            </div>
+          </div>
+          <div class="category-summary" id="category-summary"></div>
+          <div class="vacancy-list" id="category-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
