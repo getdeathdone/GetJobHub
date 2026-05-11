@@ -1,9 +1,16 @@
 import mimetypes
 from pathlib import Path
 
-from fastapi import FastAPI
+import logging
+import time
+
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("application/javascript", ".js")
@@ -18,14 +25,26 @@ STATIC_DIR = BASE_DIR / "static"
 
 def create_app() -> FastAPI:
     app = FastAPI(title="GetJobHub API", version="0.1.0")
+
+    @app.middleware("http")
+    async def log_requests(request: Request, call_next):
+        start_time = time.time()
+        response = await call_next(request)
+        process_time = (time.time() - start_time) * 1000
+        formatted_process_time = "{0:.2f}ms".format(process_time)
+        logger.info(
+            f"RID: {request.scope.get('root_path')} - {request.method} {request.url.path} - Status: {response.status_code} - Completed in {formatted_process_time}"
+        )
+        return response
+
     app.include_router(api_router, prefix="/api/v1")
 
     # Ensure STATIC_DIR exists and is used correctly
-    print(f"Static directory: {STATIC_DIR}")
+    logger.info(f"Static directory: {STATIC_DIR}")
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     else:
-        print(f"WARNING: Static directory not found at {STATIC_DIR}")
+        logger.warning(f"Static directory not found at {STATIC_DIR}")
 
     @app.get("/", include_in_schema=False)
     def dashboard() -> FileResponse:
@@ -35,8 +54,10 @@ def create_app() -> FastAPI:
         return {"error": "index.html not found", "path": str(index_path)}
 
     @app.on_event("startup")
-    def create_tables() -> None:
+    def on_startup() -> None:
         Base.metadata.create_all(bind=engine)
+        for route in app.routes:
+            logger.info(f"Route: {route.path} - Methods: {getattr(route, 'methods', 'N/A')}")
 
     return app
 

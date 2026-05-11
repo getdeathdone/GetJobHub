@@ -50,10 +50,14 @@ const el = {
 
 function api(path, options = {}) {
   const method = options.method || "GET";
+  const url = path.startsWith("http") ? path : `${window.location.origin}${path}`;
+  console.log(`[API Request] ${method} ${url}`, options.body ? JSON.parse(options.body) : "");
+  
   return fetch(path, {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
   }).then(async (response) => {
+    console.log(`[API Response] ${method} ${url} - Status: ${response.status}`);
     if (!response.ok) {
       const errorText = `API Error: ${response.status} ${response.statusText} on ${method} ${path}`;
       console.error(errorText);

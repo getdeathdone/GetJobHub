@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -10,6 +11,7 @@ from app.services.scraping import scrape_sources
 from app.services.vacancies import upsert_job
 from app.tasks.scrape import scrape_workua_task
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -20,6 +22,7 @@ def scrape_workua(
     city_slug: str | None = None,
     page_limit: Annotated[int, Query(ge=1, le=10)] = 1,
 ) -> ScrapeResult:
+    logger.info(f"Manual scrape of Work.ua started. Query: {q}, City: {city_slug}, Page limit: {page_limit}")
     scraper = WorkUaScraper()
     parsed = scraper.scrape(query=q, city_slug=city_slug, page_limit=page_limit)
 
@@ -31,6 +34,7 @@ def scrape_workua(
         updated += int(not was_created)
 
     db.commit()
+    logger.info(f"Manual scrape of Work.ua completed. Parsed: {len(parsed)}, Created: {created}, Updated: {updated}")
     return ScrapeResult(source="workua", parsed=len(parsed), created=created, updated=updated)
 
 
@@ -41,8 +45,10 @@ def scrape_all_sources(
     source: Annotated[list[str] | None, Query()] = None,
     page_limit: Annotated[int, Query(ge=1, le=5)] = 1,
 ) -> ScrapeResult:
+    logger.info(f"Scraping multiple sources: {source or 'default'}. Query: {q}, Page limit: {page_limit}")
     summary = scrape_sources(db=db, query=q, sources=source, page_limit=page_limit)
     db.commit()
+    logger.info(f"Scrape completed. Parsed: {summary.parsed}, Created: {summary.created}, Updated: {summary.updated}")
     return ScrapeResult(
         source=",".join(source or ["workua", "dou", "djinni"]),
         parsed=summary.parsed,
@@ -57,5 +63,7 @@ def enqueue_workua_scrape(
     city_slug: str | None = None,
     page_limit: Annotated[int, Query(ge=1, le=10)] = 1,
 ) -> TaskAccepted:
+    logger.info(f"Enqueuing Work.ua scrape task. Query: {q}, City: {city_slug}, Page limit: {page_limit}")
     task = scrape_workua_task.delay(query=q, city_slug=city_slug, page_limit=page_limit)
+    logger.info(f"Work.ua scrape task enqueued with ID: {task.id}")
     return TaskAccepted(task_id=task.id, status="queued")
