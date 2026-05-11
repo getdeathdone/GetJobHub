@@ -55,9 +55,20 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     def on_startup() -> None:
-        Base.metadata.create_all(bind=engine)
+        logger.info("Application starting up...")
+        try:
+            logger.info("Initializing database tables...")
+            Base.metadata.create_all(bind=engine)
+            logger.info("Database initialized successfully.")
+        except Exception as e:
+            logger.error(f"Failed to initialize database: {e}", exc_info=True)
+            # In a worker environment, we might want to continue even if DB fails 
+            # to at least serve some routes or meaningful errors.
+
+        logger.info("Registered routes:")
         for route in app.routes:
-            logger.info(f"Route: {route.path} - Methods: {getattr(route, 'methods', 'N/A')}")
+            methods = getattr(route, 'methods', 'N/A')
+            logger.info(f"Route: {route.path} - Methods: {methods}")
 
     return app
 
