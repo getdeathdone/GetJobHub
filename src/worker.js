@@ -143,8 +143,22 @@ function summarizeText(value, maxLength = 360) {
 function queryTerms(query) {
   return cleanText(query)
     .toLowerCase()
+    .replace(/[-_/]+/g, " ")
     .split(/\s+/)
     .filter((term) => term.length > 1);
+}
+
+function queryVariants(query) {
+  const normalized = queryTerms(query).join(" ");
+  const variants = [normalized || cleanText(query).toLowerCase()];
+  const compact = compactText(query);
+
+  if (compact && compact !== normalized.replace(/\s+/g, "")) variants.push(compact);
+  if (normalized === "full stack") variants.push("fullstack", "full-stack", "full stack developer");
+  if (normalized === "front end") variants.push("frontend", "front-end");
+  if (normalized === "back end") variants.push("backend", "back-end");
+
+  return [...new Set(variants.filter(Boolean))].slice(0, 5);
 }
 
 function compactText(value) {
@@ -163,6 +177,7 @@ function relevanceScore(job, query) {
   const description = cleanText(job.description).toLowerCase();
   const phrase = terms.join(" ");
   const compactQuery = compactText(query);
+  const haystackCompact = `${compactText(title)} ${compactText(tags)} ${compactText(description)}`;
 
   let score = 0;
   for (const term of terms) {
@@ -175,7 +190,7 @@ function relevanceScore(job, query) {
   if (title.includes(phrase)) score += 5;
   if (tags.includes(phrase)) score += 3;
   if (description.includes(phrase)) score += 1;
-  if (compactQuery && `${compactText(title)} ${compactText(tags)}`.includes(compactQuery)) score += 4;
+  if (compactQuery && haystackCompact.includes(compactQuery)) score += 4;
 
   return score;
 }
@@ -192,7 +207,9 @@ function softMatchesQuery(job, query) {
   if (!terms.length) return true;
 
   const haystack = cleanText(`${job.title || ""} ${job.company_name || ""} ${job.description || ""}`).toLowerCase();
-  return terms.some((term) => haystack.includes(term));
+  const compactHaystack = compactText(haystack);
+  const compactQuery = compactText(query);
+  return terms.some((term) => haystack.includes(term)) || Boolean(compactQuery && compactHaystack.includes(compactQuery));
 }
 
 async function readJson(request) {
@@ -637,29 +654,37 @@ function uniqueByUrl(jobs) {
 
 async function scrapeWorkUa(query, pageLimit) {
   const jobs = [];
-  for (let page = 1; page <= pageLimit; page += 1) {
-    const slug = encodeURIComponent(query.trim().replace(/\s+/g, "+"));
-    const suffix = page > 1 ? `?page=${page}` : "";
-    const html = await fetchText(`https://www.work.ua/jobs-${slug}/${suffix}`);
-    const matches = [...html.matchAll(/<a[^>]+href=["']([^"']*\/jobs\/\d+[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi)];
-    jobs.push(...matches.map(normalizeWorkUaFromAnchor).filter(Boolean));
+  for (const variant of queryVariants(query)) {
+    for (let page = 1; page <= pageLimit; page += 1) {
+      const slug = encodeURIComponent(variant.trim().replace(/\s+/g, "+"));
+      const suffix = page > 1 ? `?page=${page}` : "";
+      const html = await fetchText(`https://www.work.ua/jobs-${slug}/${suffix}`).catch(() => "");
+      const matches = [...html.matchAll(/<a[^>]+href=["']([^"']*\/jobs\/\d+[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+      jobs.push(...matches.map(normalizeWorkUaFromAnchor).filter(Boolean));
+    }
   }
   return uniqueByUrl(jobs).filter((job) => matchesQuery(job, query)).slice(0, 80);
 }
 
 async function scrapeDou(query) {
-  const rss = await fetchText(`https://jobs.dou.ua/vacancies/feeds/?search=${encodeURIComponent(query)}`);
-  const items = [...rss.matchAll(/<item>([\s\S]*?)<\/item>/gi)].map((match) => match[1]);
-  return uniqueByUrl(items.map(normalizeDouRssItem).filter(Boolean)).filter((job) => softMatchesQuery(job, query)).slice(0, 80);
+  const jobs = [];
+  for (const variant of queryVariants(query)) {
+    const rss = await fetchText(`https://jobs.dou.ua/vacancies/feeds/?search=${encodeURIComponent(variant)}`).catch(() => "");
+    const items = [...rss.matchAll(/<item>([\s\S]*?)<\/item>/gi)].map((match) => match[1]);
+    jobs.push(...items.map(normalizeDouRssItem).filter(Boolean));
+  }
+  return uniqueByUrl(jobs).filter((job) => softMatchesQuery(job, query)).slice(0, 80);
 }
 
 async function scrapeDjinni(query, pageLimit) {
   const jobs = [];
-  for (let page = 1; page <= pageLimit; page += 1) {
-    const slug = encodeURIComponent(query.toLowerCase().trim().replace(/\s+/g, "-"));
-    const html = await fetchText(`https://djinni.co/jobs/keyword-${slug}/?page=${page}`);
-    const matches = [...html.matchAll(/<a[^>]+href=["']([^"']*\/jobs\/\d+[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi)];
-    jobs.push(...matches.map((match) => normalizeDjinniFromAnchor(match, html)).filter(Boolean));
+  for (const variant of queryVariants(query)) {
+    for (let page = 1; page <= pageLimit; page += 1) {
+      const slug = encodeURIComponent(variant.toLowerCase().trim().replace(/\s+/g, "-"));
+      const html = await fetchText(`https://djinni.co/jobs/keyword-${slug}/?page=${page}`).catch(() => "");
+      const matches = [...html.matchAll(/<a[^>]+href=["']([^"']*\/jobs\/\d+[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+      jobs.push(...matches.map((match) => normalizeDjinniFromAnchor(match, html)).filter(Boolean));
+    }
   }
   return uniqueByUrl(jobs).filter((job) => softMatchesQuery(job, query)).slice(0, 80);
 }

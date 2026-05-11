@@ -92,6 +92,16 @@ function selectedProviderLabels() {
   return PROVIDERS.filter((provider) => selected.has(provider.id)).map((provider) => provider.label);
 }
 
+function updateSourceCountLabel() {
+  const count = selectedSources().length;
+  const suffix = count === 1 ? "source" : "sources";
+  el.searchButton.innerHTML = `<span data-lucide="scan-search"></span>Search ${count} ${suffix}`;
+  if (el.feedStatus.textContent === "ready" || el.feedStatus.textContent.includes("source")) {
+    el.feedStatus.textContent = `${count} ${suffix} selected`;
+  }
+  icons();
+}
+
 function renderSourceFilters() {
   el.sourceFilterGrid.innerHTML = PROVIDERS.map(
     (provider) => `
@@ -101,6 +111,7 @@ function renderSourceFilters() {
       </label>
     `,
   ).join("");
+  updateSourceCountLabel();
 }
 
 function switchView(view, categoryId = null) {
@@ -427,11 +438,16 @@ el.selectAllSourcesButton.addEventListener("click", () => {
   document.querySelectorAll("[data-source-input]").forEach((input) => {
     input.checked = true;
   });
+  updateSourceCountLabel();
 });
 el.clearSourcesButton.addEventListener("click", () => {
   document.querySelectorAll("[data-source-input]").forEach((input) => {
     input.checked = false;
   });
+  updateSourceCountLabel();
+});
+el.sourceFilterGrid.addEventListener("change", (event) => {
+  if (event.target.matches("[data-source-input]")) updateSourceCountLabel();
 });
 document.querySelector("#save-category-button").addEventListener("click", saveCategory);
 document.querySelector("#sync-category-button").addEventListener("click", syncActiveCategory);
