@@ -141,15 +141,44 @@ function queryTerms(query) {
     .filter((term) => term.length > 1);
 }
 
+function compactText(value) {
+  return cleanText(value).toLowerCase().replace(/[^a-z0-9а-яё]+/gi, "");
+}
+
+function relevanceScore(job, query) {
+  const terms = queryTerms(query);
+  if (!terms.length) return 10;
+
+  const title = cleanText(job.title).toLowerCase();
+  const tags = cleanText(Array.isArray(job.tags) ? job.tags.join(" ") : job.tags).toLowerCase();
+  const meta = cleanText(
+    `${job.company_name || job.company || ""} ${job.city || job.location || ""} ${job.source || ""}`,
+  ).toLowerCase();
+  const description = cleanText(job.description).toLowerCase();
+  const phrase = terms.join(" ");
+  const compactQuery = compactText(query);
+
+  let score = 0;
+  for (const term of terms) {
+    if (title.includes(term)) score += 4;
+    else if (tags.includes(term)) score += 3;
+    else if (meta.includes(term)) score += 1;
+    else if (description.includes(term)) score += 0.5;
+  }
+
+  if (title.includes(phrase)) score += 5;
+  if (tags.includes(phrase)) score += 3;
+  if (description.includes(phrase)) score += 1;
+  if (compactQuery && `${compactText(title)} ${compactText(tags)}`.includes(compactQuery)) score += 4;
+
+  return score;
+}
+
 function matchesQuery(job, query) {
   const terms = queryTerms(query);
   if (!terms.length) return true;
 
-  const haystack = cleanText(
-    `${job.title || ""} ${job.company_name || job.company || ""} ${job.city || job.location || ""}`,
-  ).toLowerCase();
-
-  return terms.every((term) => haystack.includes(term));
+  return relevanceScore(job, query) >= Math.max(3, terms.length * 2);
 }
 
 async function readJson(request) {
@@ -182,21 +211,10 @@ function rowToJob(row) {
 function searchWhere(url) {
   const clauses = [];
   const params = [];
-  const q = url.searchParams.get("q");
   const city = url.searchParams.get("city");
   const remote = url.searchParams.get("remote");
   const salaryMin = url.searchParams.get("salary_min");
   const sources = url.searchParams.getAll("source");
-
-  if (q) {
-    const terms = queryTerms(q);
-    if (terms.length) {
-      const haystackSql =
-        "lower(coalesce(j.title, '') || ' ' || coalesce(j.company_name, '') || ' ' || coalesce(j.city, '') || ' ' || coalesce(j.source, ''))";
-      clauses.push(`(${terms.map(() => `${haystackSql} LIKE ?`).join(" AND ")})`);
-      params.push(...terms.map((term) => `%${term}%`));
-    }
-  }
 
   if (city) {
     clauses.push("lower(j.city) LIKE ?");
@@ -227,9 +245,13 @@ function searchWhere(url) {
 async function listJobs(db, url, extraWhere = "", extraParams = []) {
   const limit = Math.min(Number(url.searchParams.get("limit") || DEFAULT_LIMIT), 200);
   const offset = Math.max(Number(url.searchParams.get("offset") || 0), 0);
+  const q = url.searchParams.get("q");
+  const hasQuery = queryTerms(q).length > 0;
   const { where, params } = searchWhere(url);
   const joinWhere = [where.replace(/^WHERE\s*/, ""), extraWhere].filter(Boolean).join(" AND ");
   const whereSql = joinWhere ? `WHERE ${joinWhere}` : "";
+  const queryLimit = hasQuery ? 500 : limit;
+  const queryOffset = hasQuery ? 0 : offset;
 
   const result = await db
     .prepare(
@@ -242,10 +264,16 @@ async function listJobs(db, url, extraWhere = "", extraParams = []) {
       LIMIT ? OFFSET ?
       `,
     )
-    .bind(...params, ...extraParams, limit, offset)
+    .bind(...params, ...extraParams, queryLimit, queryOffset)
     .all();
 
-  return result.results.map(rowToJob);
+  const jobs = result.results.map(rowToJob);
+  if (!hasQuery) return jobs;
+
+  return jobs
+    .filter((job) => matchesQuery(job, q))
+    .sort((a, b) => relevanceScore(b, q) - relevanceScore(a, q))
+    .slice(offset, offset + limit);
 }
 
 async function upsertJob(db, item) {
@@ -351,6 +379,27 @@ function normalizeArbeitnow(job) {
   };
 }
 
+function normalizeRemoteOk(job) {
+  const salaryMin = Number(job.salary_min || 0) || null;
+  const salaryMax = Number(job.salary_max || 0) || null;
+
+  return {
+    source: "remoteok",
+    source_url: job.url || `https://remoteok.com/remote-jobs/${job.id}`,
+    external_id: String(job.id || job.slug || job.url),
+    title: job.position || job.title || "Untitled role",
+    company_name: job.company || null,
+    city: job.location || "Remote",
+    remote: true,
+    salary_raw: salaryMin || salaryMax ? `${salaryMin || ""} - ${salaryMax || ""}`.trim() : null,
+    salary_min: salaryMin,
+    salary_max: salaryMax,
+    description: summarizeText(job.description),
+    posted_at: job.date || null,
+    tags: job.tags || [],
+  };
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, {
     headers: { "user-agent": "GetJobHub Cloudflare Worker" },
@@ -366,19 +415,32 @@ async function scrapeSources(db, url) {
 
   const remotiveUrl = `https://remotive.com/api/remote-jobs?search=${encodeURIComponent(query)}`;
   const arbeitnowUrl = `https://www.arbeitnow.com/api/job-board-api?page=${pageLimit}`;
+  const remoteOkUrl = "https://remoteok.com/api";
 
-  const [remotive, arbeitnow] = await Promise.allSettled([
+  const [remotive, arbeitnow, remoteok] = await Promise.allSettled([
     fetchJson(remotiveUrl),
     fetchJson(arbeitnowUrl),
+    fetchJson(remoteOkUrl),
   ]);
 
   if (remotive.status === "fulfilled") {
-    jobs.push(...(remotive.value.jobs || []).slice(0, 80).map(normalizeRemotive));
+    jobs.push(...(remotive.value.jobs || []).map(normalizeRemotive).filter((job) => matchesQuery(job, query)).slice(0, 80));
   }
 
   if (arbeitnow.status === "fulfilled") {
     jobs.push(
       ...(arbeitnow.value.data || []).map(normalizeArbeitnow).filter((job) => matchesQuery(job, query)).slice(0, 80),
+    );
+  }
+
+  if (remoteok.status === "fulfilled") {
+    jobs.push(
+      ...(remoteok.value || [])
+        .filter((job) => job && !job.legal)
+        .map(normalizeRemoteOk)
+        .filter((job) => matchesQuery(job, query))
+        .sort((a, b) => relevanceScore(b, query) - relevanceScore(a, query))
+        .slice(0, 80),
     );
   }
 
@@ -391,7 +453,7 @@ async function scrapeSources(db, url) {
   }
 
   return json({
-    source: "remotive,arbeitnow",
+    source: "remotive,arbeitnow,remoteok",
     parsed: jobs.length,
     created,
     updated,
