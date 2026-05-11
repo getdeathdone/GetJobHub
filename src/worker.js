@@ -187,6 +187,14 @@ function matchesQuery(job, query) {
   return relevanceScore(job, query) >= Math.max(3, terms.length * 2);
 }
 
+function softMatchesQuery(job, query) {
+  const terms = queryTerms(query).filter((term) => term.length > 2);
+  if (!terms.length) return true;
+
+  const haystack = cleanText(`${job.title || ""} ${job.company_name || ""} ${job.description || ""}`).toLowerCase();
+  return terms.some((term) => haystack.includes(term));
+}
+
 async function readJson(request) {
   if (!request.body) return {};
   return request.json().catch(() => ({}));
@@ -574,27 +582,46 @@ function normalizeDouRssItem(item) {
   };
 }
 
-function normalizeDjinniFromAnchor(match) {
+function htmlContext(html, index) {
+  const listStart = Math.max(
+    html.lastIndexOf("<li", index),
+    html.lastIndexOf("<article", index),
+    html.lastIndexOf('<div class="job-list-item', index),
+    html.lastIndexOf("<div", index),
+  );
+  const start = listStart >= 0 ? listStart : Math.max(0, index - 1200);
+  const liEnd = html.indexOf("</li>", index);
+  const articleEnd = html.indexOf("</article>", index);
+  const divEnd = html.indexOf("</div>", index);
+  const ends = [liEnd, articleEnd, divEnd].filter((value) => value > index);
+  const end = ends.length ? Math.min(...ends) + 10 : Math.min(html.length, index + 2200);
+  return html.slice(start, end);
+}
+
+function normalizeDjinniFromAnchor(match, html = "") {
   const href = match[1];
   const rawTitle = match[2];
+  const context = html && Number.isInteger(match.index) ? htmlContext(html, match.index) : rawTitle;
   const sourceUrl = absoluteUrl("https://djinni.co", href);
-  const title = cleanText(rawTitle);
+  const title = cleanText(rawTitle).replace(/\s*\$\$\$\$?$/, "").trim();
   if (!sourceUrl || !title || title.toLowerCase() === "jobs" || !/\/jobs\/\d+/i.test(sourceUrl)) return null;
 
-  const salaryRaw = extractSalary(title);
+  const text = cleanText(context);
+  const description = summarizeText(text.replace(title, "").trim());
+  const salaryRaw = extractSalary(text);
   const [salaryMin, salaryMax] = parseSalaryRange(salaryRaw);
   return {
     source: "djinni",
     source_url: sourceUrl,
     external_id: sourceUrl.replace(/\/$/, "").split("/").pop(),
     title,
-    company_name: null,
-    city: extractCity(title),
-    remote: isRemote(title),
+    company_name: text.match(/Company:\s*([^,]+)/i)?.[1]?.trim() || null,
+    city: extractCity(text),
+    remote: isRemote(text),
     salary_raw: salaryRaw,
     salary_min: salaryMin,
     salary_max: salaryMax,
-    description: null,
+    description,
     posted_at: now(),
   };
 }
@@ -623,9 +650,7 @@ async function scrapeWorkUa(query, pageLimit) {
 async function scrapeDou(query) {
   const rss = await fetchText(`https://jobs.dou.ua/vacancies/feeds/?search=${encodeURIComponent(query)}`);
   const items = [...rss.matchAll(/<item>([\s\S]*?)<\/item>/gi)].map((match) => match[1]);
-  return uniqueByUrl(items.map(normalizeDouRssItem).filter(Boolean))
-    .filter((job) => matchesQuery(job, query))
-    .slice(0, 80);
+  return uniqueByUrl(items.map(normalizeDouRssItem).filter(Boolean)).filter((job) => softMatchesQuery(job, query)).slice(0, 80);
 }
 
 async function scrapeDjinni(query, pageLimit) {
@@ -634,14 +659,16 @@ async function scrapeDjinni(query, pageLimit) {
     const slug = encodeURIComponent(query.toLowerCase().trim().replace(/\s+/g, "-"));
     const html = await fetchText(`https://djinni.co/jobs/keyword-${slug}/?page=${page}`);
     const matches = [...html.matchAll(/<a[^>]+href=["']([^"']*\/jobs\/\d+[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi)];
-    jobs.push(...matches.map(normalizeDjinniFromAnchor).filter(Boolean));
+    jobs.push(...matches.map((match) => normalizeDjinniFromAnchor(match, html)).filter(Boolean));
   }
-  return uniqueByUrl(jobs).filter((job) => matchesQuery(job, query)).slice(0, 80);
+  return uniqueByUrl(jobs).filter((job) => softMatchesQuery(job, query)).slice(0, 80);
 }
 
 async function scrapeSources(db, url) {
   const query = url.searchParams.get("q") || "full stack";
   const pageLimit = Math.min(Number(url.searchParams.get("page_limit") || 1), 5);
+  const requestedSources = new Set(url.searchParams.getAll("source"));
+  const shouldScrape = (source) => requestedSources.size === 0 || requestedSources.has(source);
   const jobs = [];
 
   const remotiveUrl = `https://remotive.com/api/remote-jobs?search=${encodeURIComponent(query)}`;
@@ -652,21 +679,21 @@ async function scrapeSources(db, url) {
 
   const [workua, dou, djinni, remotive, arbeitnow, remoteok, himalayas, remotejobs] =
     await Promise.allSettled([
-      scrapeWorkUa(query, pageLimit),
-      scrapeDou(query),
-      scrapeDjinni(query, pageLimit),
-    fetchJson(remotiveUrl),
-    fetchJson(arbeitnowUrl),
-    fetchJson(remoteOkUrl),
-    fetchJson(himalayasUrl),
-    fetchJson(remoteJobsUrl),
+      shouldScrape("workua") ? scrapeWorkUa(query, pageLimit) : [],
+      shouldScrape("dou") ? scrapeDou(query) : [],
+      shouldScrape("djinni") ? scrapeDjinni(query, pageLimit) : [],
+      shouldScrape("remotive") ? fetchJson(remotiveUrl) : null,
+      shouldScrape("arbeitnow") ? fetchJson(arbeitnowUrl) : null,
+      shouldScrape("remoteok") ? fetchJson(remoteOkUrl) : null,
+      shouldScrape("himalayas") ? fetchJson(himalayasUrl) : null,
+      shouldScrape("remotejobs") ? fetchJson(remoteJobsUrl) : null,
     ]);
 
   if (workua.status === "fulfilled") jobs.push(...workua.value);
   if (dou.status === "fulfilled") jobs.push(...dou.value);
   if (djinni.status === "fulfilled") jobs.push(...djinni.value);
 
-  if (remotive.status === "fulfilled") {
+  if (remotive.status === "fulfilled" && remotive.value) {
     jobs.push(
       ...(remotive.value.jobs || [])
         .map(normalizeRemotive)
@@ -675,13 +702,13 @@ async function scrapeSources(db, url) {
     );
   }
 
-  if (arbeitnow.status === "fulfilled") {
+  if (arbeitnow.status === "fulfilled" && arbeitnow.value) {
     jobs.push(
       ...(arbeitnow.value.data || []).map(normalizeArbeitnow).filter((job) => matchesQuery(job, query)).slice(0, 80),
     );
   }
 
-  if (remoteok.status === "fulfilled") {
+  if (remoteok.status === "fulfilled" && remoteok.value) {
     jobs.push(
       ...(remoteok.value || [])
         .filter((job) => job && !job.legal)
@@ -692,7 +719,7 @@ async function scrapeSources(db, url) {
     );
   }
 
-  if (himalayas.status === "fulfilled") {
+  if (himalayas.status === "fulfilled" && himalayas.value) {
     jobs.push(
       ...(himalayas.value.jobs || [])
         .map(normalizeHimalayas)
@@ -702,7 +729,7 @@ async function scrapeSources(db, url) {
     );
   }
 
-  if (remotejobs.status === "fulfilled") {
+  if (remotejobs.status === "fulfilled" && remotejobs.value) {
     jobs.push(
       ...(remotejobs.value.data || [])
         .map(normalizeRemoteJobs)
@@ -721,7 +748,7 @@ async function scrapeSources(db, url) {
   }
 
   return json({
-    source: "workua,dou,djinni,remotive,arbeitnow,remoteok,himalayas,remotejobs",
+    source: [...(requestedSources.size ? requestedSources : new Set(["workua", "dou", "djinni", "remotive", "arbeitnow", "remoteok", "himalayas", "remotejobs"]))].join(","),
     parsed: jobs.length,
     created,
     updated,

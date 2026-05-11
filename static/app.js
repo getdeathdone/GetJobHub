@@ -8,14 +8,14 @@ const state = {
 };
 
 const PROVIDERS = [
-  "Work.ua",
-  "DOU",
-  "Djinni",
-  "Remotive",
-  "Arbeitnow",
-  "RemoteOK",
-  "Himalayas",
-  "RemoteJobs",
+  { id: "workua", label: "Work.ua" },
+  { id: "dou", label: "DOU" },
+  { id: "djinni", label: "Djinni" },
+  { id: "remotive", label: "Remotive" },
+  { id: "arbeitnow", label: "Arbeitnow" },
+  { id: "remoteok", label: "RemoteOK" },
+  { id: "himalayas", label: "Himalayas" },
+  { id: "remotejobs", label: "RemoteJobs" },
 ];
 
 const el = {
@@ -46,6 +46,9 @@ const el = {
   progressPercent: document.querySelector("#progress-percent"),
   progressBar: document.querySelector("#progress-bar"),
   providerGrid: document.querySelector("#provider-grid"),
+  sourceFilterGrid: document.querySelector("#source-filter-grid"),
+  selectAllSourcesButton: document.querySelector("#select-all-sources-button"),
+  clearSourcesButton: document.querySelector("#clear-sources-button"),
 };
 
 function api(path, options = {}) {
@@ -77,6 +80,27 @@ function showToast(message) {
 
 function icons() {
   if (window.lucide) window.lucide.createIcons();
+}
+
+function selectedSources() {
+  const checked = [...document.querySelectorAll("[data-source-input]:checked")].map((input) => input.value);
+  return checked.length ? checked : PROVIDERS.map((provider) => provider.id);
+}
+
+function selectedProviderLabels() {
+  const selected = new Set(selectedSources());
+  return PROVIDERS.filter((provider) => selected.has(provider.id)).map((provider) => provider.label);
+}
+
+function renderSourceFilters() {
+  el.sourceFilterGrid.innerHTML = PROVIDERS.map(
+    (provider) => `
+      <label class="source-choice">
+        <input type="checkbox" data-source-input value="${provider.id}" checked />
+        <span>${provider.label}</span>
+      </label>
+    `,
+  ).join("");
 }
 
 function switchView(view, categoryId = null) {
@@ -186,17 +210,18 @@ function setSearchBusy(isBusy) {
 function startSearchProgress(query) {
   window.clearInterval(state.progressTimer);
   el.progress.classList.remove("hidden");
-  el.providerGrid.innerHTML = PROVIDERS.map(
+  const providers = selectedProviderLabels();
+  el.providerGrid.innerHTML = providers.map(
     (provider) => `<div class="provider-chip"><span>${provider}</span><i class="provider-dot"></i></div>`,
   ).join("");
+  const providerCount = providers.length;
 
   const steps = [
     { percent: 8, title: `Preparing free-text search for "${query}"`, active: 0 },
-    { percent: 20, title: "Querying Ukrainian providers", active: 2 },
-    { percent: 38, title: "Querying global remote APIs", active: 5 },
-    { percent: 56, title: "Checking keyword job boards", active: 7 },
-    { percent: 72, title: "Normalizing salaries, companies and source URLs", active: 8 },
-    { percent: 86, title: "Deduplicating and saving results", active: 8 },
+    { percent: 22, title: "Querying selected providers", active: Math.min(2, providerCount) },
+    { percent: 48, title: "Scoring relevance across titles and tags", active: Math.ceil(providerCount / 2) },
+    { percent: 72, title: "Normalizing salaries, companies and source URLs", active: providerCount },
+    { percent: 86, title: "Deduplicating and saving results", active: providerCount },
   ];
   let index = 0;
   applyProgressStep(steps[index]);
@@ -241,12 +266,14 @@ function searchParams() {
   if (el.city.value.trim()) params.set("city", el.city.value.trim());
   if (el.salary.value.trim()) params.set("salary_min", el.salary.value.trim());
   if (el.remote.checked) params.set("remote", "true");
+  selectedSources().forEach((source) => params.append("source", source));
   return params;
 }
 
 async function runSearch() {
   const query = el.query.value.trim() || "full stack";
-  el.feedStatus.textContent = "searching 8 sources";
+  const sourceCount = selectedSources().length;
+  el.feedStatus.textContent = `searching ${sourceCount} source${sourceCount === 1 ? "" : "s"}`;
   setSearchBusy(true);
   startSearchProgress(query);
   renderLoadingCards(el.searchList);
@@ -281,7 +308,7 @@ async function saveCategory() {
     city: el.city.value.trim() || null,
     remote: el.remote.checked ? true : null,
     salary_min: el.salary.value ? Number(el.salary.value) : null,
-    sources: ["workua", "dou", "djinni", "remotive", "arbeitnow", "remoteok", "himalayas", "remotejobs"],
+    sources: selectedSources(),
   };
   const category = await api("/api/v1/categories", { method: "POST", body: JSON.stringify(payload) });
   await loadCategories();
@@ -396,6 +423,16 @@ async function refreshOverview() {
 }
 
 el.searchButton.addEventListener("click", runSearch);
+el.selectAllSourcesButton.addEventListener("click", () => {
+  document.querySelectorAll("[data-source-input]").forEach((input) => {
+    input.checked = true;
+  });
+});
+el.clearSourcesButton.addEventListener("click", () => {
+  document.querySelectorAll("[data-source-input]").forEach((input) => {
+    input.checked = false;
+  });
+});
 document.querySelector("#save-category-button").addEventListener("click", saveCategory);
 document.querySelector("#sync-category-button").addEventListener("click", syncActiveCategory);
 document.querySelector("#delete-category-button").addEventListener("click", deleteActiveCategory);
@@ -426,6 +463,7 @@ document.body.addEventListener("click", (event) => {
 
 async function boot() {
   icons();
+  renderSourceFilters();
   try {
     const health = await api("/api/v1/ping");
     console.log("API Health Check:", health);

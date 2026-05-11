@@ -90,6 +90,17 @@
             <label class="toggle"><input id="remote-input" type="checkbox" /><span>Remote only</span></label>
           </section>
 
+          <section class="source-filter" aria-label="Source filters">
+            <div class="source-filter-head">
+              <span class="panel-label">Sources</span>
+              <div>
+                <button class="text-button" id="select-all-sources-button" type="button">All</button>
+                <button class="text-button" id="clear-sources-button" type="button">None</button>
+              </div>
+            </div>
+            <div class="source-filter-grid" id="source-filter-grid"></div>
+          </section>
+
           <section class="action-strip">
             <button class="primary-button" id="search-button"><span data-lucide="scan-search"></span>Search 8 sources</button>
             <button class="secondary-button" id="save-category-button"><span data-lucide="pin"></span>Save as category</button>
