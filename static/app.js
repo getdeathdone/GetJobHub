@@ -36,6 +36,7 @@ const el = {
   metricTotal: document.querySelector("#metric-total"),
   metricSaved: document.querySelector("#metric-saved"),
   metricToday: document.querySelector("#metric-today"),
+  metricSources: document.querySelector("#metric-sources"),
   sourceChart: document.querySelector("#source-chart"),
   salaryChart: document.querySelector("#salary-chart"),
   categoryChart: document.querySelector("#category-chart"),
@@ -463,6 +464,7 @@ async function refreshOverview() {
   el.metricTotal.textContent = stats.total;
   el.metricSaved.textContent = stats.saved_total;
   el.metricToday.textContent = today;
+  el.metricSources.textContent = stats.by_source.length;
   renderBars(el.sourceChart, stats.by_source, "total");
   renderBars(el.salaryChart, stats.salary_ranges, "count");
   renderBars(el.categoryChart, stats.categories, "new_today");

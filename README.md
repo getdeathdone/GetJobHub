@@ -7,7 +7,7 @@ The production app runs without a separate Python backend: Cloudflare Workers se
 ## Developer
 
 - Name: Nikita Shamrai
-- GitHub: [getdeathdone/GetJobHub](https://github.com/getdeathdone/GetJobHub)
+- GitHub: [getdeathdone](https://github.com/getdeathdone)
 - LinkedIn: [jolynike](https://www.linkedin.com/in/jolynike/)
 - Email: [jolynike@gmail.com](mailto:jolynike@gmail.com)
 
