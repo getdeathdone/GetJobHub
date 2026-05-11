@@ -117,6 +117,41 @@ function now() {
   return new Date().toISOString();
 }
 
+function cleanText(value) {
+  return String(value || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/Find more English Speaking Jobs in Germany on Arbeitnow/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function summarizeText(value, maxLength = 360) {
+  const text = cleanText(value);
+  if (text.length <= maxLength) return text;
+
+  const clipped = text.slice(0, maxLength);
+  const lastSpace = clipped.lastIndexOf(" ");
+  return `${clipped.slice(0, lastSpace > 240 ? lastSpace : maxLength).trim()}...`;
+}
+
+function queryTerms(query) {
+  return cleanText(query)
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((term) => term.length > 1);
+}
+
+function matchesQuery(job, query) {
+  const terms = queryTerms(query);
+  if (!terms.length) return true;
+
+  const haystack = cleanText(
+    `${job.title || ""} ${job.company_name || job.company || ""} ${job.city || job.location || ""}`,
+  ).toLowerCase();
+
+  return terms.every((term) => haystack.includes(term));
+}
+
 async function readJson(request) {
   if (!request.body) return {};
   return request.json().catch(() => ({}));
@@ -135,7 +170,7 @@ function rowToJob(row) {
     salary_raw: row.salary_raw,
     salary_min: row.salary_min,
     salary_max: row.salary_max,
-    description: row.description,
+    description: summarizeText(row.description),
     description_hash: row.description_hash,
     posted_at: row.posted_at,
     scraped_at: row.scraped_at,
@@ -154,9 +189,13 @@ function searchWhere(url) {
   const sources = url.searchParams.getAll("source");
 
   if (q) {
-    clauses.push("(lower(j.title) LIKE ? OR lower(j.company_name) LIKE ? OR lower(j.description) LIKE ?)");
-    const like = `%${q.toLowerCase()}%`;
-    params.push(like, like, like);
+    const terms = queryTerms(q);
+    if (terms.length) {
+      const haystackSql =
+        "lower(coalesce(j.title, '') || ' ' || coalesce(j.company_name, '') || ' ' || coalesce(j.city, '') || ' ' || coalesce(j.source, ''))";
+      clauses.push(`(${terms.map(() => `${haystackSql} LIKE ?`).join(" AND ")})`);
+      params.push(...terms.map((term) => `%${term}%`));
+    }
   }
 
   if (city) {
@@ -237,7 +276,7 @@ async function upsertJob(db, item) {
         item.salary_raw || null,
         item.salary_min || null,
         item.salary_max || null,
-        item.description || null,
+        summarizeText(item.description) || null,
         item.description_hash || null,
         item.posted_at || null,
         timestamp,
@@ -271,7 +310,7 @@ async function upsertJob(db, item) {
       item.salary_raw || null,
       item.salary_min || null,
       item.salary_max || null,
-      item.description || null,
+      summarizeText(item.description) || null,
       item.description_hash || null,
       item.posted_at || null,
       timestamp,
@@ -292,7 +331,7 @@ function normalizeRemotive(job) {
     city: job.candidate_required_location || "Remote",
     remote: true,
     salary_raw: job.salary || null,
-    description: (job.description || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim(),
+    description: summarizeText(job.description),
     posted_at: job.publication_date || null,
   };
 }
@@ -307,7 +346,7 @@ function normalizeArbeitnow(job) {
     city: job.location || "Remote",
     remote: Boolean(job.remote),
     salary_raw: null,
-    description: (job.description || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim(),
+    description: summarizeText(job.description),
     posted_at: job.created_at ? new Date(job.created_at * 1000).toISOString() : null,
   };
 }
@@ -339,10 +378,7 @@ async function scrapeSources(db, url) {
 
   if (arbeitnow.status === "fulfilled") {
     jobs.push(
-      ...(arbeitnow.value.data || [])
-        .filter((job) => `${job.title} ${job.description}`.toLowerCase().includes(query.toLowerCase()))
-        .slice(0, 80)
-        .map(normalizeArbeitnow),
+      ...(arbeitnow.value.data || []).map(normalizeArbeitnow).filter((job) => matchesQuery(job, query)).slice(0, 80),
     );
   }
 
