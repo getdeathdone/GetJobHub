@@ -426,6 +426,12 @@ document.body.addEventListener("click", (event) => {
 
 async function boot() {
   icons();
+  try {
+    const health = await api("/api/v1/ping");
+    console.log("API Health Check:", health);
+  } catch (e) {
+    console.error("API Health Check Failed:", e.message);
+  }
   await loadCategories();
   await refreshOverview();
   switchView("overview");
