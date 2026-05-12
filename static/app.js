@@ -5,6 +5,9 @@ const state = {
   lastSearchJobs: [],
   autoSyncedCategories: new Set(),
   progressTimer: null,
+  statsCache: null,
+  statsCacheAt: 0,
+  marketMapRendered: false,
 };
 
 const PROVIDERS = [
@@ -348,7 +351,7 @@ async function runSearch() {
     renderJobs(el.searchList, jobs, "No matches found");
     el.feedStatus.textContent = `${jobs.length} matched`;
     finishSearchProgress(jobs.length);
-    await refreshOverview();
+    await refreshOverviewFresh();
   } catch (error) {
     failSearchProgress(error.message);
     renderJobs(el.searchList, [], "Search failed");
@@ -429,7 +432,7 @@ async function syncActiveCategory() {
   showToast(`Parsed ${result.parsed}, linked ${result.linked} new`);
   await loadCategories();
   await loadCategoryJobs(state.activeCategoryId);
-  await refreshOverview();
+  await refreshOverviewFresh();
 }
 
 async function deleteActiveCategory() {
@@ -439,7 +442,7 @@ async function deleteActiveCategory() {
   await api(`/api/v1/categories/${state.activeCategoryId}`, { method: "DELETE" });
   await loadCategories();
   switchView("overview");
-  await refreshOverview();
+  await refreshOverviewFresh();
 }
 
 async function toggleSave(jobId) {
@@ -455,10 +458,12 @@ async function toggleSave(jobId) {
   if (state.view === "favorites") await loadFavorites();
   if (state.view === "category") await loadCategoryJobs(state.activeCategoryId);
   if (state.view === "search") {
-    const jobs = await api(`/api/v1/vacancies/search?${searchParams().toString()}`);
-    renderJobs(el.searchList, jobs, "No matches found");
+    state.lastSearchJobs = state.lastSearchJobs.map((job) =>
+      job.internal_id === jobId ? { ...job, is_saved: !isSaved } : job,
+    );
+    renderJobs(el.searchList, state.lastSearchJobs, "No matches found");
   }
-  await refreshOverview();
+  await refreshOverviewFresh();
 }
 
 function renderBars(container, rows, valueKey = "count") {
@@ -473,7 +478,7 @@ function renderBars(container, rows, valueKey = "count") {
 }
 
 async function refreshOverview() {
-  const stats = await api("/api/v1/stats");
+  const stats = await loadStats();
   const today = stats.by_source.reduce((sum, item) => sum + item.today, 0);
   el.metricTotal.textContent = stats.total;
   el.metricSaved.textContent = stats.saved_total;
@@ -484,8 +489,23 @@ async function refreshOverview() {
   renderBars(el.categoryChart, stats.categories, "new_today");
 }
 
+async function loadStats(force = false) {
+  const cacheAge = Date.now() - state.statsCacheAt;
+  if (!force && state.statsCache && cacheAge < 30000) return state.statsCache;
+
+  state.statsCache = await api("/api/v1/stats");
+  state.statsCacheAt = Date.now();
+  return state.statsCache;
+}
+
+async function refreshOverviewFresh() {
+  await loadStats(true);
+  state.marketMapRendered = false;
+  await refreshOverview();
+}
+
 async function renderMarketMap() {
-  const stats = await api("/api/v1/stats");
+  const stats = await loadStats();
   const jobs = await api("/api/v1/vacancies/search?limit=200");
   const counts = Object.fromEntries(MARKET_SEGMENTS.map((segment) => [segment.id, 0]));
   counts.other = 0;
@@ -527,6 +547,7 @@ async function renderMarketMap() {
       `,
     )
     .join("");
+  state.marketMapRendered = true;
 }
 
 async function expandIndex() {
@@ -550,7 +571,7 @@ async function expandIndex() {
       el.feedStatus.textContent = `${created} new from ${parsed} parsed`;
     }
 
-    await refreshOverview();
+    await refreshOverviewFresh();
     showToast(`Index expanded: ${created} new vacancies`);
   } catch (error) {
     showToast(error.message);
@@ -587,7 +608,7 @@ document.body.addEventListener("click", (event) => {
     switchView(nav.dataset.view);
     if (nav.dataset.view === "favorites") loadFavorites();
     if (nav.dataset.view === "overview") refreshOverview();
-    if (nav.dataset.view === "market") renderMarketMap();
+    if (nav.dataset.view === "market" && !state.marketMapRendered) renderMarketMap();
     return;
   }
   const categoryTab = event.target.closest("[data-category-id]");
@@ -611,8 +632,7 @@ async function boot() {
     console.error("API Health Check Failed:", e.message);
   }
   await loadCategories();
-  await refreshOverview();
-  await renderMarketMap();
+  await refreshOverviewFresh();
   switchView("overview");
 }
 

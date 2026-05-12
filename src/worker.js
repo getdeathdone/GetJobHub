@@ -377,12 +377,36 @@ async function listJobs(db, url, extraWhere = "", extraParams = [], userId = "an
 
 async function upsertJob(db, item) {
   const timestamp = now();
+  const nextJob = {
+    source: item.source,
+    external_id: item.external_id || null,
+    title: item.title,
+    company_name: item.company_name || null,
+    city: item.city || null,
+    remote: item.remote ? 1 : 0,
+    salary_raw: item.salary_raw || null,
+    salary_min: item.salary_min || null,
+    salary_max: item.salary_max || null,
+    description: summarizeText(item.description) || null,
+    description_hash: item.description_hash || null,
+    posted_at: item.posted_at || null,
+  };
   const existing = await db
-    .prepare("SELECT internal_id FROM jobs WHERE source_url = ?")
+    .prepare(
+      `
+      SELECT internal_id, source, external_id, title, company_name, city, remote,
+        salary_raw, salary_min, salary_max, description, description_hash, posted_at
+      FROM jobs
+      WHERE source_url = ?
+      `,
+    )
     .bind(item.source_url)
     .first();
 
   if (existing) {
+    const changed = Object.keys(nextJob).some((key) => String(existing[key] ?? "") !== String(nextJob[key] ?? ""));
+    if (!changed) return { id: existing.internal_id, created: false, updated: false };
+
     await db
       .prepare(
         `
@@ -394,23 +418,23 @@ async function upsertJob(db, item) {
         `,
       )
       .bind(
-        item.source,
-        item.external_id || null,
-        item.title,
-        item.company_name || null,
-        item.city || null,
-        item.remote ? 1 : 0,
-        item.salary_raw || null,
-        item.salary_min || null,
-        item.salary_max || null,
-        summarizeText(item.description) || null,
-        item.description_hash || null,
-        item.posted_at || null,
+        nextJob.source,
+        nextJob.external_id,
+        nextJob.title,
+        nextJob.company_name,
+        nextJob.city,
+        nextJob.remote,
+        nextJob.salary_raw,
+        nextJob.salary_min,
+        nextJob.salary_max,
+        nextJob.description,
+        nextJob.description_hash,
+        nextJob.posted_at,
         timestamp,
         existing.internal_id,
       )
       .run();
-    return { id: existing.internal_id, created: false };
+    return { id: existing.internal_id, created: false, updated: true };
   }
 
   const id = uuid();
@@ -427,25 +451,25 @@ async function upsertJob(db, item) {
     )
     .bind(
       id,
-      item.source,
+      nextJob.source,
       item.source_url,
-      item.external_id || null,
-      item.title,
-      item.company_name || null,
-      item.city || null,
-      item.remote ? 1 : 0,
-      item.salary_raw || null,
-      item.salary_min || null,
-      item.salary_max || null,
-      summarizeText(item.description) || null,
-      item.description_hash || null,
-      item.posted_at || null,
+      nextJob.external_id,
+      nextJob.title,
+      nextJob.company_name,
+      nextJob.city,
+      nextJob.remote,
+      nextJob.salary_raw,
+      nextJob.salary_min,
+      nextJob.salary_max,
+      nextJob.description,
+      nextJob.description_hash,
+      nextJob.posted_at,
       timestamp,
       timestamp,
     )
     .run();
 
-  return { id, created: true };
+  return { id, created: true, updated: false };
 }
 
 function normalizeRemotive(job) {
@@ -837,7 +861,7 @@ async function scrapeSources(db, url) {
   for (const job of jobs) {
     const result = await upsertJob(db, job);
     created += result.created ? 1 : 0;
-    updated += result.created ? 0 : 1;
+    updated += result.updated ? 1 : 0;
   }
 
   return json({
@@ -862,6 +886,10 @@ async function categoryWithCounts(db, row) {
     .bind(row.id)
     .first();
 
+  return categoryRowToJson({ ...row, total: counts.total || 0, new_today: counts.new_today || 0 });
+}
+
+function categoryRowToJson(row) {
   return {
     id: row.id,
     name: row.display_name || row.name,
@@ -872,17 +900,29 @@ async function categoryWithCounts(db, row) {
     sources: row.sources ? row.sources.split(",").filter(Boolean) : null,
     created_at: row.created_at,
     last_synced_at: row.last_synced_at,
-    total: counts.total || 0,
-    new_today: counts.new_today || 0,
+    total: row.total || 0,
+    new_today: row.new_today || 0,
   };
 }
 
 async function listCategories(db, userId) {
   const result = await db
-    .prepare("SELECT * FROM search_categories WHERE user_id = ? ORDER BY created_at DESC")
+    .prepare(
+      `
+      SELECT c.*,
+        COUNT(cj.job_id) AS total,
+        SUM(CASE WHEN date(cj.first_seen_at) = date('now') THEN 1 ELSE 0 END) AS new_today
+      FROM search_categories c
+      LEFT JOIN category_jobs cj ON cj.category_id = c.id
+      WHERE c.user_id = ?
+      GROUP BY c.id, c.user_id, c.display_name, c.name, c.query, c.city, c.remote,
+        c.salary_min, c.sources, c.created_at, c.last_synced_at
+      ORDER BY c.created_at DESC
+      `,
+    )
     .bind(userId)
     .all();
-  return json(await Promise.all(result.results.map((row) => categoryWithCounts(db, row))));
+  return json(result.results.map(categoryRowToJson));
 }
 
 async function createCategory(db, request, userId) {
@@ -959,11 +999,6 @@ async function syncCategory(db, id, userId) {
       .bind(uuid(), id, job.internal_id, timestamp, timestamp)
       .run();
     linked += result.meta.changes || 0;
-
-    await db
-      .prepare("UPDATE category_jobs SET last_seen_at = ? WHERE category_id = ? AND job_id = ?")
-      .bind(timestamp, id, job.internal_id)
-      .run();
   }
 
   await db
@@ -981,7 +1016,18 @@ async function syncCategory(db, id, userId) {
 }
 
 async function stats(db, userId) {
-  const total = await db.prepare("SELECT COUNT(*) AS total FROM jobs").first();
+  const totals = await db
+    .prepare(
+      `
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN salary_min < 1000 THEN 1 ELSE 0 END) AS under_1k,
+        SUM(CASE WHEN salary_min >= 1000 AND salary_min < 3000 THEN 1 ELSE 0 END) AS between_1k_3k,
+        SUM(CASE WHEN salary_min >= 3000 THEN 1 ELSE 0 END) AS over_3k
+      FROM jobs
+      `,
+    )
+    .first();
   const saved = await db.prepare("SELECT COUNT(*) AS total FROM saved_jobs WHERE user_id = ?").bind(userId).first();
   const bySource = await db
     .prepare(
@@ -1009,20 +1055,8 @@ async function stats(db, userId) {
     .bind(userId)
     .all();
 
-  const salaryRanges = await db
-    .prepare(
-      `
-      SELECT
-        SUM(CASE WHEN salary_min < 1000 THEN 1 ELSE 0 END) AS under_1k,
-        SUM(CASE WHEN salary_min >= 1000 AND salary_min < 3000 THEN 1 ELSE 0 END) AS between_1k_3k,
-        SUM(CASE WHEN salary_min >= 3000 THEN 1 ELSE 0 END) AS over_3k
-      FROM jobs
-      `,
-    )
-    .first();
-
   return json({
-    total: total.total || 0,
+    total: totals.total || 0,
     saved_total: saved.total || 0,
     by_source: bySource.results.map((row) => ({
       source: row.source,
@@ -1030,9 +1064,9 @@ async function stats(db, userId) {
       today: row.today || 0,
     })),
     salary_ranges: [
-      { label: "< $1k", count: salaryRanges.under_1k || 0 },
-      { label: "$1k-$3k", count: salaryRanges.between_1k_3k || 0 },
-      { label: "$3k+", count: salaryRanges.over_3k || 0 },
+      { label: "< $1k", count: totals.under_1k || 0 },
+      { label: "$1k-$3k", count: totals.between_1k_3k || 0 },
+      { label: "$3k+", count: totals.over_3k || 0 },
     ],
     categories: categories.results.map((row) => ({
       id: row.id,
