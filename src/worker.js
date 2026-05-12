@@ -30,13 +30,16 @@ CREATE INDEX IF NOT EXISTS ix_jobs_remote ON jobs (remote);
 
 CREATE TABLE IF NOT EXISTS saved_jobs (
   id TEXT PRIMARY KEY,
-  job_id TEXT NOT NULL UNIQUE,
+  user_id TEXT NOT NULL DEFAULT 'legacy',
+  job_id TEXT NOT NULL,
   notes TEXT,
   saved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (user_id, job_id),
   FOREIGN KEY (job_id) REFERENCES jobs (internal_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS ix_saved_jobs_job_id ON saved_jobs (job_id);
+CREATE INDEX IF NOT EXISTS ix_saved_jobs_user_id ON saved_jobs (user_id);
 
 CREATE TABLE IF NOT EXISTS search_categories (
   id TEXT PRIMARY KEY,
@@ -104,7 +107,8 @@ async function ensureSchema(db) {
   const statements = SCHEMA_SQL.split(";")
     .map((statement) => statement.trim())
     .filter(Boolean)
-    .filter((statement) => !statement.includes("ix_search_categories_user_id"));
+    .filter((statement) => !statement.includes("ix_search_categories_user_id"))
+    .filter((statement) => !statement.includes("ix_saved_jobs_user_id"));
 
   for (const statement of statements) {
     await db.prepare(statement).run();
@@ -113,8 +117,51 @@ async function ensureSchema(db) {
   await ensureColumn(db, "search_categories", "user_id", "TEXT NOT NULL DEFAULT 'legacy'");
   await ensureColumn(db, "search_categories", "display_name", "TEXT");
   await db.prepare("CREATE INDEX IF NOT EXISTS ix_search_categories_user_id ON search_categories (user_id)").run();
+  await ensureSavedJobsSchema(db);
+  await db.prepare("CREATE INDEX IF NOT EXISTS ix_saved_jobs_user_id ON saved_jobs (user_id)").run();
 
   schemaReady = true;
+}
+
+async function ensureSavedJobsSchema(db) {
+  const indexes = await db.prepare("PRAGMA index_list(saved_jobs)").all();
+  let hasLegacyJobUnique = false;
+  let hasUserScopedUnique = false;
+
+  for (const index of indexes.results) {
+    if (!index.unique) continue;
+    const indexInfo = await db.prepare(`PRAGMA index_info(${index.name})`).all();
+    const columns = indexInfo.results.map((column) => column.name).join(",");
+    if (columns === "job_id") hasLegacyJobUnique = true;
+    if (columns === "user_id,job_id") hasUserScopedUnique = true;
+  }
+
+  await ensureColumn(db, "saved_jobs", "user_id", "TEXT NOT NULL DEFAULT 'legacy'");
+
+  if (hasLegacyJobUnique && !hasUserScopedUnique) {
+    const migrationStatements = [
+      `CREATE TABLE IF NOT EXISTS saved_jobs_next (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL DEFAULT 'legacy',
+        job_id TEXT NOT NULL,
+        notes TEXT,
+        saved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (user_id, job_id),
+        FOREIGN KEY (job_id) REFERENCES jobs (internal_id) ON DELETE CASCADE
+      )`,
+      `INSERT OR IGNORE INTO saved_jobs_next (id, user_id, job_id, notes, saved_at)
+       SELECT id, user_id, job_id, notes, saved_at FROM saved_jobs`,
+      "DROP TABLE saved_jobs",
+      "ALTER TABLE saved_jobs_next RENAME TO saved_jobs",
+      "CREATE INDEX IF NOT EXISTS ix_saved_jobs_job_id ON saved_jobs (job_id)",
+    ];
+
+    for (const statement of migrationStatements) {
+      await db.prepare(statement).run();
+    }
+  }
+
+  await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS ix_saved_jobs_user_job ON saved_jobs (user_id, job_id)").run();
 }
 
 async function ensureColumn(db, tableName, columnName, definition) {
@@ -294,7 +341,7 @@ function searchWhere(url) {
   };
 }
 
-async function listJobs(db, url, extraWhere = "", extraParams = []) {
+async function listJobs(db, url, extraWhere = "", extraParams = [], userId = "anonymous") {
   const limit = Math.min(Number(url.searchParams.get("limit") || DEFAULT_LIMIT), 200);
   const offset = Math.max(Number(url.searchParams.get("offset") || 0), 0);
   const q = url.searchParams.get("q");
@@ -310,13 +357,13 @@ async function listJobs(db, url, extraWhere = "", extraParams = []) {
       `
       SELECT j.*, CASE WHEN s.id IS NULL THEN 0 ELSE 1 END AS is_saved
       FROM jobs j
-      LEFT JOIN saved_jobs s ON s.job_id = j.internal_id
+      LEFT JOIN saved_jobs s ON s.job_id = j.internal_id AND s.user_id = ?
       ${whereSql}
       ORDER BY COALESCE(j.posted_at, j.scraped_at) DESC
       LIMIT ? OFFSET ?
       `,
     )
-    .bind(...params, ...extraParams, queryLimit, queryOffset)
+    .bind(userId, ...params, ...extraParams, queryLimit, queryOffset)
     .all();
 
   const jobs = result.results.map(rowToJob);
@@ -897,7 +944,7 @@ async function syncCategory(db, id, userId) {
   }
   searchUrl.searchParams.set("limit", "100");
 
-  const jobs = await listJobs(db, searchUrl);
+  const jobs = await listJobs(db, searchUrl, "", [], userId);
   let linked = 0;
   const timestamp = now();
 
@@ -935,7 +982,7 @@ async function syncCategory(db, id, userId) {
 
 async function stats(db, userId) {
   const total = await db.prepare("SELECT COUNT(*) AS total FROM jobs").first();
-  const saved = await db.prepare("SELECT COUNT(*) AS total FROM saved_jobs").first();
+  const saved = await db.prepare("SELECT COUNT(*) AS total FROM saved_jobs WHERE user_id = ?").bind(userId).first();
   const bySource = await db
     .prepare(
       `
@@ -1013,7 +1060,7 @@ async function handleApi(request, env) {
   if (path === `${API_PREFIX}/stats` && request.method === "GET") return stats(db, userId);
   if (path === `${API_PREFIX}/scrape/all` && request.method === "POST") return scrapeSources(db, url);
   if (path === `${API_PREFIX}/vacancies/search` && request.method === "GET") {
-    return json(await listJobs(db, url));
+    return json(await listJobs(db, url, "", [], userId));
   }
 
   if (path === `${API_PREFIX}/categories` && request.method === "GET") return listCategories(db, userId);
@@ -1035,7 +1082,7 @@ async function handleApi(request, env) {
         .bind(id, userId)
         .first();
       if (!category) return notFound();
-      return json(await listJobs(db, url, "j.internal_id IN (SELECT job_id FROM category_jobs WHERE category_id = ?)", [id]));
+      return json(await listJobs(db, url, "j.internal_id IN (SELECT job_id FROM category_jobs WHERE category_id = ?)", [id], userId));
     }
   }
 
@@ -1046,9 +1093,11 @@ async function handleApi(request, env) {
         SELECT s.id, s.saved_at, s.notes, j.*, 1 AS is_saved
         FROM saved_jobs s
         JOIN jobs j ON j.internal_id = s.job_id
+        WHERE s.user_id = ?
         ORDER BY s.saved_at DESC
         `,
       )
+      .bind(userId)
       .all();
     return json(
       result.results.map((row) => ({
@@ -1066,13 +1115,19 @@ async function handleApi(request, env) {
     if (request.method === "POST") {
       const payload = await readJson(request);
       await db
-        .prepare("INSERT OR REPLACE INTO saved_jobs (id, job_id, notes, saved_at) VALUES (?, ?, ?, ?)")
-        .bind(uuid(), jobId, payload.notes || null, now())
+        .prepare(
+          `
+          INSERT INTO saved_jobs (id, user_id, job_id, notes, saved_at)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(user_id, job_id) DO UPDATE SET notes = excluded.notes, saved_at = excluded.saved_at
+          `,
+        )
+        .bind(uuid(), userId, jobId, payload.notes || null, now())
         .run();
       return json({ status: "saved" });
     }
     if (request.method === "DELETE") {
-      await db.prepare("DELETE FROM saved_jobs WHERE job_id = ?").bind(jobId).run();
+      await db.prepare("DELETE FROM saved_jobs WHERE job_id = ? AND user_id = ?").bind(jobId, userId).run();
       return noContent();
     }
   }

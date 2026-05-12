@@ -25,13 +25,16 @@ CREATE INDEX IF NOT EXISTS ix_jobs_remote ON jobs (remote);
 
 CREATE TABLE IF NOT EXISTS saved_jobs (
   id TEXT PRIMARY KEY,
-  job_id TEXT NOT NULL UNIQUE,
+  user_id TEXT NOT NULL DEFAULT 'legacy',
+  job_id TEXT NOT NULL,
   notes TEXT,
   saved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (user_id, job_id),
   FOREIGN KEY (job_id) REFERENCES jobs (internal_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS ix_saved_jobs_job_id ON saved_jobs (job_id);
+CREATE INDEX IF NOT EXISTS ix_saved_jobs_user_id ON saved_jobs (user_id);
 
 CREATE TABLE IF NOT EXISTS search_categories (
   id TEXT PRIMARY KEY,
