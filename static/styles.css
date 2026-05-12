@@ -420,7 +420,6 @@ h2 {
 
 .metric {
   min-height: 0;
-  flex: 1 1 0;
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: 8px;
