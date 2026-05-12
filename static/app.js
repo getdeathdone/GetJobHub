@@ -82,13 +82,27 @@ const MARKET_SEGMENTS = [
   { id: "product", label: "Product", terms: ["product manager", "project manager", "scrum", "owner"] },
 ];
 
+function getUserId() {
+  const storageKey = "getjobhub_user_id";
+  let userId = window.localStorage.getItem(storageKey);
+  if (!userId) {
+    userId = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    window.localStorage.setItem(storageKey, userId);
+  }
+  return userId;
+}
+
 function api(path, options = {}) {
   const method = options.method || "GET";
   const url = path.startsWith("http") ? path : `${window.location.origin}${path}`;
   console.log(`[API Request] ${method} ${url}`, options.body ? JSON.parse(options.body) : "");
   
   return fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers: {
+      "Content-Type": "application/json",
+      "X-GetJobHub-User-Id": getUserId(),
+      ...(options.headers || {}),
+    },
     ...options,
   }).then(async (response) => {
     console.log(`[API Response] ${method} ${url} - Status: ${response.status}`);

@@ -35,6 +35,8 @@ CREATE INDEX IF NOT EXISTS ix_saved_jobs_job_id ON saved_jobs (job_id);
 
 CREATE TABLE IF NOT EXISTS search_categories (
   id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL DEFAULT 'legacy',
+  display_name TEXT,
   name TEXT NOT NULL UNIQUE,
   query TEXT NOT NULL,
   city TEXT,
@@ -47,6 +49,7 @@ CREATE TABLE IF NOT EXISTS search_categories (
 
 CREATE INDEX IF NOT EXISTS ix_search_categories_name ON search_categories (name);
 CREATE INDEX IF NOT EXISTS ix_search_categories_query ON search_categories (query);
+CREATE INDEX IF NOT EXISTS ix_search_categories_user_id ON search_categories (user_id);
 
 CREATE TABLE IF NOT EXISTS category_jobs (
   id TEXT PRIMARY KEY,

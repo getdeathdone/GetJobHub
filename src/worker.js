@@ -40,6 +40,8 @@ CREATE INDEX IF NOT EXISTS ix_saved_jobs_job_id ON saved_jobs (job_id);
 
 CREATE TABLE IF NOT EXISTS search_categories (
   id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL DEFAULT 'legacy',
+  display_name TEXT,
   name TEXT NOT NULL UNIQUE,
   query TEXT NOT NULL,
   city TEXT,
@@ -52,6 +54,7 @@ CREATE TABLE IF NOT EXISTS search_categories (
 
 CREATE INDEX IF NOT EXISTS ix_search_categories_name ON search_categories (name);
 CREATE INDEX IF NOT EXISTS ix_search_categories_query ON search_categories (query);
+CREATE INDEX IF NOT EXISTS ix_search_categories_user_id ON search_categories (user_id);
 
 CREATE TABLE IF NOT EXISTS category_jobs (
   id TEXT PRIMARY KEY,
@@ -106,7 +109,19 @@ async function ensureSchema(db) {
     await db.prepare(statement).run();
   }
 
+  await ensureColumn(db, "search_categories", "user_id", "TEXT NOT NULL DEFAULT 'legacy'");
+  await ensureColumn(db, "search_categories", "display_name", "TEXT");
+  await db.prepare("CREATE INDEX IF NOT EXISTS ix_search_categories_user_id ON search_categories (user_id)").run();
+
   schemaReady = true;
+}
+
+async function ensureColumn(db, tableName, columnName, definition) {
+  const info = await db.prepare(`PRAGMA table_info(${tableName})`).all();
+  const exists = info.results.some((column) => column.name === columnName);
+  if (!exists) {
+    await db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`).run();
+  }
 }
 
 function uuid() {
@@ -115,6 +130,11 @@ function uuid() {
 
 function now() {
   return new Date().toISOString();
+}
+
+function requestUserId(request) {
+  const raw = request.headers.get("x-getjobhub-user-id") || "anonymous";
+  return raw.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80) || "anonymous";
 }
 
 function cleanText(value) {
@@ -796,7 +816,7 @@ async function categoryWithCounts(db, row) {
 
   return {
     id: row.id,
-    name: row.name,
+    name: row.display_name || row.name,
     query: row.query,
     city: row.city,
     remote: row.remote === null ? null : Boolean(row.remote),
@@ -809,12 +829,15 @@ async function categoryWithCounts(db, row) {
   };
 }
 
-async function listCategories(db) {
-  const result = await db.prepare("SELECT * FROM search_categories ORDER BY created_at DESC").all();
+async function listCategories(db, userId) {
+  const result = await db
+    .prepare("SELECT * FROM search_categories WHERE user_id = ? ORDER BY created_at DESC")
+    .bind(userId)
+    .all();
   return json(await Promise.all(result.results.map((row) => categoryWithCounts(db, row))));
 }
 
-async function createCategory(db, request) {
+async function createCategory(db, request, userId) {
   const payload = await readJson(request);
   if (!payload.name || !payload.query) {
     return json({ detail: "name and query are required" }, { status: 422 });
@@ -822,16 +845,19 @@ async function createCategory(db, request) {
 
   const id = uuid();
   const timestamp = now();
+  const displayName = String(payload.name).slice(0, 120);
   await db
     .prepare(
       `
-      INSERT INTO search_categories (id, name, query, city, remote, salary_min, sources, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO search_categories (id, user_id, display_name, name, query, city, remote, salary_min, sources, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
     )
     .bind(
       id,
-      String(payload.name).slice(0, 120),
+      userId,
+      displayName,
+      `${userId}:${displayName}:${id}`,
       String(payload.query).slice(0, 255),
       payload.city || null,
       payload.remote === null || payload.remote === undefined ? null : payload.remote ? 1 : 0,
@@ -845,12 +871,18 @@ async function createCategory(db, request) {
   return json(await categoryWithCounts(db, row), { status: 201 });
 }
 
-async function syncCategory(db, id) {
-  const category = await db.prepare("SELECT * FROM search_categories WHERE id = ?").bind(id).first();
+async function syncCategory(db, id, userId) {
+  const category = await db
+    .prepare("SELECT * FROM search_categories WHERE id = ? AND user_id = ?")
+    .bind(id, userId)
+    .first();
   if (!category) return notFound();
 
   const scrapeUrl = new URL("https://worker.local/api/v1/scrape/all");
   scrapeUrl.searchParams.set("q", category.query);
+  if (category.sources) {
+    category.sources.split(",").filter(Boolean).forEach((source) => scrapeUrl.searchParams.append("source", source));
+  }
   const scrapeResponse = await scrapeSources(db, scrapeUrl);
   const scrapeResult = await scrapeResponse.json();
 
@@ -859,6 +891,9 @@ async function syncCategory(db, id) {
   if (category.city) searchUrl.searchParams.set("city", category.city);
   if (category.remote !== null) searchUrl.searchParams.set("remote", category.remote ? "true" : "false");
   if (category.salary_min) searchUrl.searchParams.set("salary_min", category.salary_min);
+  if (category.sources) {
+    category.sources.split(",").filter(Boolean).forEach((source) => searchUrl.searchParams.append("source", source));
+  }
   searchUrl.searchParams.set("limit", "100");
 
   const jobs = await listJobs(db, searchUrl);
@@ -897,7 +932,7 @@ async function syncCategory(db, id) {
   });
 }
 
-async function stats(db) {
+async function stats(db, userId) {
   const total = await db.prepare("SELECT COUNT(*) AS total FROM jobs").first();
   const saved = await db.prepare("SELECT COUNT(*) AS total FROM saved_jobs").first();
   const bySource = await db
@@ -914,14 +949,16 @@ async function stats(db) {
   const categories = await db
     .prepare(
       `
-      SELECT c.id, c.name, COUNT(cj.job_id) AS total,
+      SELECT c.id, COALESCE(c.display_name, c.name) AS name, COUNT(cj.job_id) AS total,
         SUM(CASE WHEN date(cj.first_seen_at) = date('now') THEN 1 ELSE 0 END) AS new_today
       FROM search_categories c
       LEFT JOIN category_jobs cj ON cj.category_id = c.id
-      GROUP BY c.id, c.name
+      WHERE c.user_id = ?
+      GROUP BY c.id, c.name, c.display_name
       ORDER BY c.created_at DESC
       `,
     )
+    .bind(userId)
     .all();
 
   const salaryRanges = await db
@@ -964,6 +1001,7 @@ async function handleApi(request, env) {
   const url = new URL(request.url);
   const path = url.pathname;
   const db = env.DB;
+  const userId = requestUserId(request);
 
   await ensureSchema(db);
 
@@ -971,26 +1009,31 @@ async function handleApi(request, env) {
     return json({ status: "ok", message: "GetJobHub Worker API is alive", storage: "d1" });
   }
 
-  if (path === `${API_PREFIX}/stats` && request.method === "GET") return stats(db);
+  if (path === `${API_PREFIX}/stats` && request.method === "GET") return stats(db, userId);
   if (path === `${API_PREFIX}/scrape/all` && request.method === "POST") return scrapeSources(db, url);
   if (path === `${API_PREFIX}/vacancies/search` && request.method === "GET") {
     return json(await listJobs(db, url));
   }
 
-  if (path === `${API_PREFIX}/categories` && request.method === "GET") return listCategories(db);
+  if (path === `${API_PREFIX}/categories` && request.method === "GET") return listCategories(db, userId);
   if (path === `${API_PREFIX}/categories` && request.method === "POST") {
-    return createCategory(db, request);
+    return createCategory(db, request, userId);
   }
 
   const categoryMatch = path.match(/^\/api\/v1\/categories\/([^/]+)(?:\/(sync|vacancies))?$/);
   if (categoryMatch) {
     const [, id, action] = categoryMatch;
     if (!action && request.method === "DELETE") {
-      await db.prepare("DELETE FROM search_categories WHERE id = ?").bind(id).run();
+      await db.prepare("DELETE FROM search_categories WHERE id = ? AND user_id = ?").bind(id, userId).run();
       return noContent();
     }
-    if (action === "sync" && request.method === "POST") return syncCategory(db, id);
+    if (action === "sync" && request.method === "POST") return syncCategory(db, id, userId);
     if (action === "vacancies" && request.method === "GET") {
+      const category = await db
+        .prepare("SELECT id FROM search_categories WHERE id = ? AND user_id = ?")
+        .bind(id, userId)
+        .first();
+      if (!category) return notFound();
       return json(await listJobs(db, url, "j.internal_id IN (SELECT job_id FROM category_jobs WHERE category_id = ?)", [id]));
     }
   }
