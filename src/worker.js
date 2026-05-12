@@ -103,7 +103,8 @@ async function ensureSchema(db) {
   if (schemaReady) return;
   const statements = SCHEMA_SQL.split(";")
     .map((statement) => statement.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((statement) => !statement.includes("ix_search_categories_user_id"));
 
   for (const statement of statements) {
     await db.prepare(statement).run();
